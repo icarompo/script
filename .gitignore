@@ -1,0 +1,79 @@
+# ===========================
+# Editor & IDE
+# ===========================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ===========================
+# Node.js (se usar npm no futuro)
+# ===========================
+node_modules/
+package-lock.json
+yarn.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===========================
+# Sistema Operacional
+# ===========================
+Thumbs.db
+Desktop.ini
+.Spotlight-V100
+.Trashes
+
+# ===========================
+# Arquivos Temporários
+# ===========================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*~
+
+# ===========================
+# Logs
+# ===========================
+*.log
+logs/
+
+# ===========================
+# Arquivos Sensíveis
+# ===========================
+.env
+.env.local
+.env.*.local
+secrets.json
+config.local.js
+
+# ===========================
+# Builds e Dist
+# ===========================
+dist/
+build/
+out/
+.cache/
+
+# ===========================
+# OS específico
+# ===========================
+.windows
+.mac
+.linux
+
+# ===========================
+# Arquivos de Download (se houver testes)
+# ===========================
+downloads/
+*.exe
+*.msi
+*.zip
