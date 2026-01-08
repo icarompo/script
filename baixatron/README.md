@@ -1,168 +1,86 @@
-# 👾 BAIXATRON - Auto-Downloader Universal
+# Baixatron — Auto Downloader Universal
 
-> O Alien que invade downloads! 📡
+Documentação formal da versão padrão (sem emojis).
 
-## 🎯 Visão Geral
+## Visão Geral
 
-**BAIXATRON** é um script JavaScript universal para download automático de múltiplos arquivos em qualquer website. Funciona com painel visual intuitivo + modo console para controle total.
+Baixatron é um script JavaScript para automatizar o download de múltiplos arquivos em páginas web. Possui painel visual, modo console, detecção de links de download e acompanhamento de progresso.
 
-### ✨ Características
+## Principais Funcionalidades
 
-- **Painel Visual Completo** - Interface dark mode com tema claro optional
-- **Detecção Inteligente** - Encontra downloads em qualquer site
-- **Seleção Customizável** - Escolha quais arquivos baixar
-- **Barra de Progresso** - Acompanhe o andamento em tempo real
-- **Estatísticas em Vivo** - Fila, processados, erros, selecionados
-- **Controle de Velocidade** - Ajuste o delay entre downloads (200ms - 3000ms)
-- **Modo Seguro** - Começa com `dryRun: true` (sem downloads reais)
-- **Suporte a iframes** - Funciona em sites com conteúdo em iframes
-- **Múltiplos Formatos** - PDF, Word, Excel, PowerPoint, ZIP, RAR, 7Z, e mais
+- Painel visual com controles de escaneamento, início, pausa, seleção e reset
+- Detecção de links de download em páginas comuns e dentro de iframes
+- Seleção de itens a serem processados (checkbox por item)
+- Barra de progresso com porcentagem e tempo estimado restante
+- Estatísticas em tempo real: fila, ativos, processados, selecionados, erros
+- Controle de velocidade (intervalo entre ações) configurável
+- Mecanismo de repetição (retry) com limite de tentativas
+- Execução serial por padrão (`concurrency: 1`), ajustável
 
-## 🚀 Como Usar
+## Uso
 
-### 1. **Via Painel Visual** (Recomendado)
+### Via Painel Visual
 
-```javascript
-// Cole o script no console (F12 > Console)
-// Um painel aparecerá no canto superior direito
-```
+1. Carregue a página desejada e abra as ferramentas de desenvolvedor (F12 > Console)
+2. Injete o script ou instale via Tampermonkey
+3. Utilize os botões do painel:
+   - Escanear: localiza todos os links de download
+   - Iniciar: inicia o processamento dos itens selecionados
+   - Pausar: interrompe temporariamente o processo
+   - Selecionar todos / Nenhum: gerencia seleção
+   - Reset: limpa fila, seleção, processados e erros
+   - Alternar tema: modo claro/escuro
 
-**Botões do Painel:**
-- `[⊙] Escanear` - Encontra todos os downloads na página
-- `[▶] Iniciar` - Começa o download automático
-- `[⏸] Pausar` - Pausa o processo
-- `[+] Todos` - Seleciona todos os itens
-- `[-] Nenhum` - Deseleciona todos
-- `[↻] Reset` - Limpa tudo e recomeça
-- `🌙` - Alterna entre tema escuro/claro
-
-### 2. **Via Console**
+### Via Console
 
 ```javascript
 // Escanear downloads
 __dl.scan()
 
-// Iniciar downloads
-__dl.start()
+// Iniciar/Pausar/Resetar
+__dl.start(); __dl.stop(); __dl.reset();
 
-// Parar o processo
-__dl.stop()
+// Seleção
+__dl.selectAll(); __dl.deselectAll(); __dl.toggleSelect(key);
 
-// Resetar tudo
-__dl.reset()
+// Configuração
+__dl.opts;                   // ver opções atuais
+__dl.setOptions({ delayMs: 1200, maxClicks: 10, dryRun: false });
 
-// Selecionar/desselecionar
-__dl.selectAll()
-__dl.deselectAll()
-__dl.toggleSelect(key)
+// Estado
+__dl.state.queue; __dl.state.processed; __dl.state.errors; __dl.state.selectedKeys;
 ```
 
-### 3. **Configuração Avançada**
+## Opções (Resumo)
 
-```javascript
-// Ver opções atuais
-__dl.opts
+- `dryRun` (boolean): inicia em modo seguro, sem acionar downloads reais (padrão: `true`)
+- `delayMs` (number): intervalo entre itens/ações
+- `waitForDownload` (boolean) e `waitForDownloadTimeout` (ms): aguarda conclusão após clique
+- `concurrency` (number): quantidade de itens processados em paralelo
+- `maxRetries` (number): tentativas por item em caso de erro
+- `maxClicks` (number): limite superior de itens a processar
+- `dedupe` (boolean): evita repetir itens já concluídos
 
-// Desabilitar modo seguro (ATIVE DOWNLOADS REAIS)
-__dl.setOptions({ dryRun: false })
+## Progresso e Tempo Estimado
 
-// Mudar velocidade (ms entre downloads)
-__dl.setOptions({ delayMs: 1200 })
+A barra de progresso exibe a porcentagem concluída e o tempo restante estimado, calculado pela média de duração dos itens já processados. O valor é atualizado conforme o processamento avança.
 
-// Limitar número de downloads
-__dl.setOptions({ maxClicks: 10 })
-```
+## Formatos Suportados
 
-### 4. **Acessar Estado Global**
+PDF, DOC, DOCX, ODT, XLS, XLSX, ODS, CSV, PPT, PPTX, ZIP, RAR, 7Z, TXT, RTF.
 
-```javascript
-// Ver fila
-__dl.state.queue
+## Compatibilidade
 
-// Ver processados
-__dl.state.processed
+- Navegadores modernos (Chrome, Firefox, Safari, Edge)
+- Páginas com conteúdo em iframes (Scriptcase, WPDM, Elementor)
 
-// Ver erros
-__dl.state.errors
+## Limitações e Observações
 
-// Ver selecionados
-__dl.state.selectedKeys
-```
+- O download é iniciado via clique no elemento. O destino é controlado pelo navegador (pasta padrão de downloads). Não há seleção de pasta customizada.
+- O modo seguro (`dryRun: true`) evita que downloads reais sejam acionados até que seja desativado.
+- A detecção de links ignora elementos de UI comuns para reduzir cliques indevidos.
 
-## ⚠️ Modo Seguro
+## Versão
 
-**SEMPRE começa com `dryRun: true`** - isso significa que o script simula os cliques sem fazer downloads reais.
+v3.0 — Versão padrão com painel visual, progresso percentual e tempo estimado.
 
-Para ativar downloads reais:
-
-```javascript
-__dl.setOptions({ dryRun: false })
-__dl.start()
-```
-
-## 🎨 Temas
-
-### Tema Escuro (Padrão)
-- Fundo: #1a1a1a
-- Texto: #ffffff
-- Accent: #4CAF50 (sucesso), #ff9800 (processando), #dc3545 (erro)
-
-### Tema Claro
-- Clique no botão 🌙 no header do painel
-- Cores automáticamente invertidas
-- Preferência salva em localStorage
-
-## 📋 Arquivos Suportados
-
-- 📄 **Documentos**: PDF, DOC, DOCX, ODT
-- 📊 **Planilhas**: XLS, XLSX, ODS, CSV
-- 🎠 **Apresentações**: PPT, PPTX
-- 📦 **Compactados**: ZIP, RAR, 7Z
-- 📝 **Texto**: TXT, RTF
-
-## 🔧 Compatibilidade
-
-✅ Funciona em qualquer navegador moderno (Chrome, Firefox, Safari, Edge)
-✅ Suporta sites com iframes (Scriptcase, WPDM, Elementor)
-✅ Detecta automaticamente tipo de página
-
-## 📊 Estatísticas do Painel
-
-| Campo | Significado |
-|-------|------------|
-| **Fila** | Arquivos aguardando download |
-| **Processados** | Arquivos já baixados |
-| **Selecionados** | Itens marcados para download |
-| **Erros** | Downloads que falharam |
-
-## 🎯 Uso Recomendado
-
-1. Cole o script no console
-2. Clique em `[⊙] Escanear` para encontrar downloads
-3. Deselecione itens que não quer (se necessário)
-4. Ajuste a velocidade com o slider
-5. Clique em `[▶] Iniciar` para começar
-6. Acompanhe o progresso no painel
-
-## 🛡️ Segurança
-
-- ✅ Sem dependências externas
-- ✅ 100% código vanilla JavaScript
-- ✅ Modo seguro por padrão
-- ✅ Deduplicação automática de itens
-- ✅ Filtra cliques acidentais em botões de UI
-
-## 📝 Notas
-
-- O script **não precisa ser instalado**, basta colar no console
-- Os downloads são feitos pelo navegador (não há proxy)
-- A pasta de destino é a pasta padrão do navegador
-- Você pode pausar e retomar a qualquer momento
-
-## 🔄 Versão
-
-**v3.0 - Alien Edition** com tema claro/escuro e painel visual completo
-
----
-
-**Desenvolvido com ❤️ para invasores de downloads**

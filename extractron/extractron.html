@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+
+<html lang="pt-BR">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>EXTRACTRON - Extrator de Decretos PDF</title>
+
+    <style>
+
+        body {
+
+            font-family: Arial, sans-serif;
+
+            max-width: 1200px;
+
+            margin: 50px auto;
+
+            padding: 20px;
+
+        }
+
+        .container {
+
+            border: 2px dashed #ccc;
+
+            padding: 30px;
+
+            text-align: center;
+
+            border-radius: 10px;
+
+        }
+
+        button {
+
+            background-color: #4CAF50;
+
+            color: white;
+
+            padding: 15px 32px;
+
+            font-size: 16px;
+
+            border: none;
+
+            border-radius: 5px;
+
+            cursor: pointer;
+
+        }
+
+        button:hover {
+
+            background-color: #45a049;
+
+        }
+
+        #results {
+
+            margin-top: 30px;
+
+        }
+
+        .decreto-item {
+
+            background-color: #f5f5f5;
+
+            padding: 15px;
+
+            margin: 10px 0;
+
+            border-radius: 5px;
+
+            border-left: 4px solid #4CAF50;
+
+        }
+
+        .loading {
+
+            color: #666;
+
+            font-style: italic;
+
+        }
+
+        .progress {
+
+            margin-top: 20px;
+
+            padding: 10px;
+
+            background-color: #e3f2fd;
+
+            border-radius: 5px;
+
+        }
+
+        .progress-bar {
+
+            width: 100%;
+
+            height: 30px;
+
+            background-color: #f0f0f0;
+
+            border-radius: 5px;
+
+            overflow: hidden;
+
+            margin-top: 10px;
+
+        }
+
+        .progress-fill {
+
+            height: 100%;
+
+            background-color: #4CAF50;
+
+            transition: width 0.3s;
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: center;
+
+            color: white;
+
+            font-weight: bold;
+
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>🔍 EXTRACTRON - Invasor de PDFs</h1>
+
+        <p>Extrator automático de dados de decretos municipais</p>
+
+        <button onclick="document.getElementById('pdfInput').click()">Selecionar PDFs</button>
+
+    </div>
+
+    
+
+    <div id="results"></div>
+
+
+    <script>
+
+        // Configurar o PDF.js
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+
+        document.getElementById('pdfInput').addEventListener('change', async function(e) {
+
+            const files = Array.from(e.target.files);
+
+            const resultsDiv = document.getElementById('results');
+
+            resultsDiv.innerHTML = '<div class="loading">Processando arquivos em paralelo...</div><div class="progress" id="progressContainer" style="display:none;"><div id="progressText"></div><div class="progress-bar"><div class="progress-fill" id="progressFill">0%</div></div></div>';
+
+            
+
+            const totalFiles = files.length;
+
+            let processedCount = 0;
+
+            
+
+            // Processar todos os arquivos em paralelo
+
+            const decretos = await Promise.all(
+
+                files.map(async (file) => {
+
+                    try {
+
+                        const decreto = await processarPDF(file);
+
+                        processedCount++;
+
+                        updateProgress(processedCount, totalFiles, `Processados: ${processedCount}/${totalFiles}`);
+
+                        return decreto;
+
+                    } catch (error) {
+
+                        console.error(`Erro ao processar ${file.name}:`, error);
+
+                        processedCount++;
+
+                        updateProgress(processedCount, totalFiles, `Processados: ${processedCount}/${totalFiles}`);
+
+                        return {
+
+                            arquivo: file.name,
+
+                            numeroDecreto: 'Erro no processamento',
+
+                            data: 'Erro',
+
+                            descricao: error.message,
+
+                            erro: true
+
+                        };
+
+                    }
+
+                })
+
+            );
+
+            
+
+            // Filtrar valores nulos
+
+            const decretosValidos = decretos.filter(d => d !== null);
+
+            
+
+            exibirResultados(decretosValidos);
+
+            console.log('Decretos extraídos:', decretosValidos);
+
+        });
+
+
+        function updateProgress(current, total, message) {
+
+            const progressContainer = document.getElementById('progressContainer');
+
+            const progressText = document.getElementById('progressText');
+
+            const progressFill = document.getElementById('progressFill');
+
+            
+
+            progressContainer.style.display = 'block';
+
+            const percentage = Math.round((current / total) * 100);
+
+            progressFill.style.width = percentage + '%';
+
+            progressFill.textContent = percentage + '%';
+
+            progressText.textContent = `${message} (${current}/${total})`;
+
+        }
+
+
+        async function processarPDF(file) {
+
+            const arrayBuffer = await file.arrayBuffer();
+
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+            
+
+            let textoCompleto = '';
+
+            let usouOCR = false;
+
+            
+
+            // Ler todas as páginas
+
+            for (let i = 1; i <= pdf.numPages; i++) {
+
+                const page = await pdf.getPage(i);
+
+                const textContent = await page.getTextContent();
+
+                const pageText = textContent.items.map(item => item.str).join(' ');
+
+                
+
+                // Se a página tem pouco ou nenhum texto, usar OCR
+
+                if (pageText.trim().length < 50) {
+
+                    console.log(`Página ${i} de ${file.name} sem texto - usando OCR...`);
+
+                    const ocrText = await extrairTextoComOCR(page);
+
+                    textoCompleto += ocrText + ' ';
+
+                } else {
+
+                    textoCompleto += pageText + ' ';
+
+                }
+
+            }
+
+            
+
+            // Extrair informações usando regex
+
+            const decreto = extrairInformacoes(textoCompleto, file.name);
+
+            return decreto;
+
+        }
+
+
+        async function extrairTextoComOCR(page) {
+
+            try {
+
+                // Renderizar a página como imagem
+
+                const viewport = page.getViewport({ scale: 2.0 });
+
+                const canvas = document.createElement('canvas');
+
+                const context = canvas.getContext('2d');
+
+                canvas.height = viewport.height;
+
+                canvas.width = viewport.width;
+
+
+                await page.render({
+
+                    canvasContext: context,
+
+                    viewport: viewport
+
+                }).promise;
+
+
+                // Converter canvas para imagem e aplicar OCR
+
+                const imageData = canvas.toDataURL('image/png');
+
+                
+
+                const result = await Tesseract.recognize(
+
+                    imageData,
+
+                    'por', // Português
+
+                );
+
+
+                return result.data.text;
+
+            } catch (error) {
+
+                console.error('Erro no OCR:', error);
+
+                return '';
+
+            }
+
+        }
+
+
+        function extrairInformacoes(texto, nomeArquivo) {
+
+            // Padrões para extrair informações
+
+            
+
+            // Número do decreto - diversos formatos possíveis
+
+            const regexNumero = [
+
+                /DECRETO(?:\s+N[ºª°]?)?\s*(\d+(?:[\.\/\-]\d+)*)(?:\-?([A-Z]))?\b/i
+
+            ];
+
+            
+
+            let numeroDecreto = null;
+
+            let letraDoDecreto = null;
+
+            for (let regex of regexNumero) {
+
+                const match = texto.match(regex);
+
+                if (match) {
+
+                    numeroDecreto = match[1];
+
+                    if (match[2])
+
+                        letraDoDecreto = match[2];
+
+                    break;
+
+                }
+
+            }
+
+            
+
+            // Data - diversos formatos e conversão para formato brasileiro
+
+            const regexData = [
+
+                /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})/i,
+
+                /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
+
+                /(\d{4})-(\d{1,2})-(\d{1,2})/
+
+            ];
+
+            
+
+            // Mapa de meses em português
+
+            const meses = {
+
+                'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
+
+                'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+
+                'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+
+            };
+
+            
+
+            let data = null;
+
+            for (let regex of regexData) {
+
+                const match = texto.match(regex);
+
+                if (match) {
+
+                    if (regex.toString().includes('de')) {
+
+                        // Formato: "01 de janeiro de 2024" -> converter para dd/mm/yyyy
+
+                        const dia = match[1].padStart(2, '0');
+
+                        const mesNome = match[2].toLowerCase();
+
+                        const mes = meses[mesNome] || '01';
+
+                        const ano = match[3];
+
+                        data = `${dia}/${mes}/${ano}`;
+
+                    } else if (match[0].includes('/')) {
+
+                        // Formato: "01/01/2024" - já está no formato brasileiro
+
+                        const partes = match[0].split('/');
+
+                        const dia = partes[0].padStart(2, '0');
+
+                        const mes = partes[1].padStart(2, '0');
+
+                        const ano = partes[2];
+
+                        data = `${dia}/${mes}/${ano}`;
+
+                    } else {
+
+                        // Formato: "2024-01-01" -> converter para dd/mm/yyyy
+
+                        const ano = match[1];
+
+                        const mes = match[2].padStart(2, '0');
+
+                        const dia = match[3].padStart(2, '0');
+
+                        data = `${dia}/${mes}/${ano}`;
+
+                    }
+
+                    break;
+
+                }
+
+            }
+
+            
+
+            // Descrição - melhorada para capturar o conteúdo principal
+
+            let descricao = '';
+
+            
+
+            // Procurar palavras-chave comuns em decretos
+
+            const palavrasChave = [
+
+                'dispõe sobre',
+
+                'dispõe',
+
+                'altera',
+
+                'revoga',
+
+                'autorizada',
+
+                'estabelece',
+
+                'institui',
+
+                'regulamenta',
+
+                'aprova',
+
+                'autoriza',
+
+                'nomeia',
+
+                'exonera',
+
+                'designa',
+
+                'fixa',
+
+                'cria',
+
+                'extingue',
+
+                'torna',
+
+                'dispensa',
+
+                'declara',
+
+                'determina',
+
+                'ementa'
+
+            ];
+
+            
+
+            let inicioDescricao = -1;
+
+            let palavraEncontrada = '';
+
+            
+
+            for (const palavra of palavrasChave) {
+
+                const index = texto.toLowerCase().indexOf(palavra.toLowerCase());
+
+                if (index !== -1 && (inicioDescricao === -1 || index < inicioDescricao)) {
+
+                    inicioDescricao = index;
+
+                    palavraEncontrada = palavra;
+
+                }
+
+            }
+
+            
+
+            if (inicioDescricao !== -1) {
+
+                // Extrair do início da descrição
+
+                let textoDescricao = texto.substring(inicioDescricao);
+
+                
+
+                // Limpar espaços extras e quebras de linha
+
+                textoDescricao = textoDescricao.replace(/\s+/g, ' ').trim();
+
+                
+
+                // Procurar o fim da descrição (antes de "e dá outras providências" ou artigo 1)
+
+                const marcadoresFim = [
+
+                    ', e dá outras providências',
+
+                    ' e dá outras providências',
+
+                    'e dá outras providências',
+
+                    ', e outras providências'
+
+                ];
+
+                
+
+                let fimDescricao = textoDescricao.length;
+
+                let marcadorUsado = '';
+
+                
+
+                for (const marcador of marcadoresFim) {
+
+                    const index = textoDescricao.toLowerCase().indexOf(marcador.toLowerCase());
+
+                    if (index !== -1 && index < fimDescricao) {
+
+                        fimDescricao = index;
+
+                        marcadorUsado = marcador;
+
+                    }
+
+                }
+
+                
+
+                // Se não encontrou nenhum marcador, pegar até o primeiro ponto seguido de maiúscula
+
+                if (fimDescricao === textoDescricao.length) {
+
+                    const matchPonto = textoDescricao.match(/\.\s+[A-Z]/);
+
+                    if (matchPonto && matchPonto.index < 500) {
+
+                        fimDescricao = matchPonto.index + 1;
+
+                    }
+
+                }
+
+                
+
+                descricao = textoDescricao.substring(0, fimDescricao).trim() + marcadorUsado;
+
+                
+
+                // Garantir que termina com pontuação
+
+                if (descricao && !/[.!?,;]$/.test(descricao)) {
+
+                    const ultimoPonto = Math.max(
+
+                        descricao.lastIndexOf('.'),
+
+                        descricao.lastIndexOf(','),
+
+                        descricao.lastIndexOf(';')
+
+                    );
+
+                    if (ultimoPonto > 50) {
+
+                        descricao = descricao.substring(0, ultimoPonto + 1);
+
+                    } else {
+
+                        descricao += '.';
+
+                    }
+
+                }
+
+            }
+
+            
+
+            // Se não encontrou descrição, tentar pegar após o número do decreto
+
+            if (!descricao && numeroDecreto) {
+
+                const regexPosNumero = new RegExp(`decreto.*?${numeroDecreto}.*?([^\\n]{50,300})`, 'i');
+
+                const matchPosNumero = texto.match(regexPosNumero);
+
+                if (matchPosNumero) {
+
+                    descricao = matchPosNumero[1].replace(/\s+/g, ' ').trim().substring(0, 200) + '...';
+
+                }
+
+            }
+
+            
+
+            return {
+
+                arquivo: nomeArquivo,
+
+                numeroDecreto: numeroDecreto.includes('/') ? numeroDecreto.split('/')[0] : numeroDecreto ? numeroDecreto : null,
+
+                data: data || null,
+
+                letra: letraDoDecreto || null,
+
+                descricao: descricao.toUpperCase() || null,
+
+                url: `https://api-riosono.barcodigital.com.br/arquivo/riosono.to.leg.br/documentos-site/${encodeURIComponent(nomeArquivo)}`
+
+            };
+
+        }
+
+
+        function exibirResultados(decretos) {
+
+            const resultsDiv = document.getElementById('results');
+
+            
+
+            if (decretos.length === 0) {
+
+                resultsDiv.innerHTML = '<p>Nenhum decreto foi processado.</p>';
+
+                return;
+
+            }
+
+            
+
+            let html = '<h2>Decretos Extraídos (' + decretos.length + ')</h2>';
+
+            
+
+            decretos.forEach((decreto, index) => {
+
+                const ocrBadge = decreto.usouOCR ? ' <span style="background-color: #ff9800; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px;">OCR</span>' : '';
+
+                const erroBadge = decreto.erro ? ' <span style="background-color: #f44336; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px;">ERRO</span>' : '';
+
+                
+
+                html += `
+
+                    <div class="decreto-item">
+
+                        <strong>Arquivo:</strong> ${decreto.arquivo}${ocrBadge}${erroBadge}<br>
+
+                        <strong>Número do Decreto:</strong> ${decreto.numeroDecreto}<br>
+
+                        <strong>Data:</strong> ${decreto.data}<br>
+
+                        <strong>Descrição:</strong> ${decreto.descricao}
+
+                    </div>
+
+                `;
+
+            });
+
+
+            const file = new Blob([JSON.stringify(decretos, null, 2)], { type: 'application/json' });
+
+            const a = document.createElement('a');
+
+            a.href = URL.createObjectURL(file);
+
+            a.download = 'decretos_extraidos.json';
+
+            a.click();
+
+            
+
+            html += '<p style="margin-top: 20px;"><em>💡 Os resultados também foram impressos no console (F12)</em></p>';
+
+            
+
+            resultsDiv.innerHTML = html;
+
+        }
+
+    </script>
+
+</body>
+
+</html>

@@ -1,8 +1,23 @@
-/**
+// ==UserScript==
+  // @name         BAIXATRON HACKER - Auto Downloader Cyberpunk
+  // @namespace    https://github.com/HelloKiw1
+  // @version      3.0
+  // @description  👾 SISTEMA DE INVASÃO DE DOWNLOADS ATIVADO 💻 - Painel hacker para download automático
+  // @author       HelloKiw1
+  // @match        *://*/*
+  // @grant        none
+  // @run-at       document-idle
+  // @icon         data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="75" font-size="75">👾</text></svg>
+  // ==/UserScript==
+
+  /**
  * BAIXATRON HACKER EDITION - AUTO-DOWNLOADER COM ESTÉTICA CYBERPUNK
  * 
  * > SISTEMA DE INVASÃO DE DOWNLOADS ATIVADO
  * > ACESSO PERMITIDO: ELITE HACKER MODE
+ * 
+ * Produzido por HelloKiw1
+ * GitHub: https://github.com/HelloKiw1
  * 
  * Funciona tanto via PAINEL UI quanto via CONSOLE
  * 
@@ -30,7 +45,10 @@
   const opts = {
     dryRun: true,
     delayMs: 800,
-    waitForDownload: false,
+    waitForDownload: true,
+    waitForDownloadTimeout: 3000,
+    concurrency: 1,
+    maxRetries: 1,
     rootSelector: null,
     autoDetectIframe: true,
     maxClicks: Infinity,
@@ -155,6 +173,8 @@
     pageType: null
   };
 
+  const runningSet = new Set();
+
   const detectPageType = () => {
     const url = window.location.href.toLowerCase();
     const html = document.documentElement.outerHTML.toLowerCase();
@@ -266,35 +286,85 @@
     }
   };
 
-  const processNext = async () => {
+  const processLoop = async () => {
     if (!state.running) return;
-    
-    while (state.queue.length > 0 && !state.selectedKeys.has(state.queue[0].key)) {
-      state.queue.shift();
+
+    while (runningSet.size < opts.concurrency && state.queue.length > 0) {
+      const next = pullNext();
+      if (!next) break;
+      runItem(next);
     }
-    
-    if (!state.queue.length || state.processed.length >= opts.maxClicks) {
+
+    if (!state.running) return;
+
+    if (state.queue.length === 0 && runningSet.size === 0) {
       state.running = false;
       log('>> DOWNLOAD COMPLETO - MISSION ACCOMPLISHED', 'success');
       updateUI();
       return;
     }
 
-    const it = state.queue.shift();
+    clearTimeout(state.timer);
+    state.timer = setTimeout(processLoop, opts.delayMs);
+  };
+
+  const pullNext = () => {
+    const originalLength = state.queue.length;
+    const skipped = [];
+    
+    for (let i = 0; i < originalLength && state.processed.length < opts.maxClicks; i++) {
+      const candidate = state.queue.shift();
+      if (!candidate) break;
+      
+      if (state.selectedKeys.has(candidate.key)) {
+        // Recoloca items pulados na fila
+        state.queue.unshift(...skipped);
+        return candidate;
+      }
+      skipped.push(candidate);
+    }
+    
+    // Recoloca todos os items pulados
+    state.queue.unshift(...skipped);
+    return null;
+  };
+
+  const waitForCompletion = async () => {
+    if (!opts.waitForDownload) return;
+    log('⏳ Aguardando download completar...', 'info');
+    await wait(opts.waitForDownloadTimeout);
+  };
+
+  const runItem = async it => {
+    runningSet.add(it.key);
+    const itemStartTime = Date.now();
+    updateUI();
+    log(`🎯 Iniciando: ${it.text?.slice(0, 60)}`, 'info');
     try {
       await safeClick(it);
+      log('🖱️ Click executado, aguardando...', 'info');
+      await waitForCompletion();
+      const itemDuration = Date.now() - itemStartTime;
+      it.duration = itemDuration;
       state.doneKeys.add(it.key);
       state.processed.push(it);
       log(`[✓] ${it.text || 'arquivo anônimo'}`, 'success');
-      updateUI();
     } catch (err) {
-      state.errors.push({ key: it.key, text: it.text, err: String(err) });
-      log(`[✗] ERRO: ${it.text}`, 'error');
+      it.retries = (it.retries || 0) + 1;
+      log(`[⚠] Erro (tentativa ${it.retries}/${opts.maxRetries}): ${it.text?.slice(0, 50)} - ${err.message}`, 'warning');
+      if (it.retries <= opts.maxRetries) {
+        log('🔄 Recolocando na fila para retry...', 'info');
+        state.queue.push(it);
+      } else {
+        log(`[✗] ERRO: ${it.text}`, 'error');
+        state.errors.push({ key: it.key, text: it.text, err: String(err) });
+      }
+    } finally {
+      runningSet.delete(it.key);
+      log(`⏱️ Aguardando ${opts.delayMs}ms...`, 'info');
+      await wait(opts.delayMs);
       updateUI();
     }
-
-    await wait(opts.delayMs);
-    state.timer = setTimeout(processNext, 10);
   };
 
   // ============================================
@@ -313,7 +383,7 @@
     state.startedAt = new Date();
     log(`>> INICIANDO DOWNLOAD DE ${state.queue.length} ARQUIVOS...`, 'hack');
     updateUI();
-    processNext();
+    processLoop();
   };
 
   const stop = () => {
@@ -359,10 +429,59 @@
     updateUI();
   };
 
+  const toggleTheme = () => {
+    const panel = document.getElementById('__dl-panel');
+    if (!panel) return;
+    
+    const isLightMode = panel.classList.contains('light-mode');
+    if (isLightMode) {
+      panel.classList.remove('light-mode');
+      localStorage.setItem('__dl-theme-hacker', 'dark');
+      const themeBtn = document.getElementById('__dl-theme-toggle');
+      if (themeBtn) themeBtn.textContent = '🌙';
+    } else {
+      panel.classList.add('light-mode');
+      localStorage.setItem('__dl-theme-hacker', 'light');
+      const themeBtn = document.getElementById('__dl-theme-toggle');
+      if (themeBtn) themeBtn.textContent = '☀️';
+    }
+  };
+
+  const getEstimatedTime = () => {
+    if (!state.running || state.processed.length === 0) return null;
+    
+    // Calcular tempo médio por item
+    const processedWithTime = state.processed.filter(it => it.duration);
+    if (processedWithTime.length === 0) return null;
+    
+    const totalDuration = processedWithTime.reduce((sum, it) => sum + it.duration, 0);
+    const avgDuration = totalDuration / processedWithTime.length;
+    
+    // Itens restantes (fila + ativos)
+    const remaining = state.queue.length + runningSet.size;
+    const estimatedMs = remaining * avgDuration;
+    
+    return Math.ceil(estimatedMs / 1000); // retorna em segundos
+  };
+
+  const formatTime = (seconds) => {
+    if (!seconds || seconds <= 0) return '--:--';
+    
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hrs > 0) {
+      return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  };
+
   window.__dl = { 
     start, stop, reset, scan,
     selectAll, deselectAll, toggleSelect,
-    setOptions, opts, state
+    setOptions, opts, state,
+    toggleTheme
   };
 
   // ============================================
@@ -429,6 +548,8 @@
       align-items: center;
       letter-spacing: 2px;
       text-transform: uppercase;
+      cursor: move;
+      user-select: none;
     }
 
     #__dl-header::before {
@@ -465,7 +586,7 @@
       padding: 14px;
       font-size: 11px;
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
       gap: 10px;
       border-bottom: 1px solid #00ff4133;
     }
@@ -534,8 +655,8 @@
     }
 
     .btn {
-      flex: 1;
-      min-width: 70px;
+      flex: 1 1 0;
+      min-width: 90px;
       padding: 8px 10px;
       border: 1px solid #00ff41;
       border-radius: 0;
@@ -549,6 +670,7 @@
       text-transform: uppercase;
       letter-spacing: 1px;
       white-space: nowrap;
+      text-align: center;
     }
 
     .btn::before {
@@ -798,6 +920,10 @@
           <span class="stat-value" id="stat-queue">0</span>
         </div>
         <div class="stat-item">
+          <span class="stat-label">Active</span>
+          <span class="stat-value" id="stat-active">0</span>
+        </div>
+        <div class="stat-item">
           <span class="stat-label">Pwned</span>
           <span class="stat-value" id="stat-processed">0</span>
         </div>
@@ -812,6 +938,10 @@
       </div>
 
       <div id="__dl-progress">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span style="font-size: 11px; font-weight: 600; color: #00ff41;" id="progress-percent">0%</span>
+          <span style="font-size: 11px; color: #00ffff;" id="progress-time">--:--</span>
+        </div>
         <div class="progress-bar">
           <div class="progress-fill" id="__dl-progress-fill" style="width: 0%"></div>
         </div>
@@ -857,7 +987,40 @@
       document.getElementById('speed-value').textContent = value + 'ms';
     };
 
+    enableDrag(panel, document.getElementById('__dl-header'));
     updateUI();
+  };
+
+  // ============================================
+  // ARRASTAR PAINEL
+  // ============================================
+  const enableDrag = (panel, handle) => {
+    if (!panel || !handle) return;
+
+    const dragState = { active: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0 };
+
+    const onMove = e => {
+      if (!dragState.active) return;
+      const x = e.clientX - dragState.offsetX;
+      const y = e.clientY - dragState.offsetY;
+      panel.style.right = '';
+      panel.style.left = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, x)) + 'px';
+      panel.style.top = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, y)) + 'px';
+    };
+
+    const onUp = () => {
+      dragState.active = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    handle.addEventListener('mousedown', e => {
+      dragState.active = true;
+      dragState.offsetX = e.clientX - panel.getBoundingClientRect().left;
+      dragState.offsetY = e.clientY - panel.getBoundingClientRect().top;
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
   };
 
   // ============================================
@@ -868,14 +1031,30 @@
     if (!panel) return;
 
     document.getElementById('stat-queue').textContent = state.queue.length;
+    document.getElementById('stat-active').textContent = runningSet.size;
     document.getElementById('stat-processed').textContent = state.processed.length;
     document.getElementById('stat-selected').textContent = state.selectedKeys.size;
     document.getElementById('stat-errors').textContent = state.errors.length;
 
-    const total = state.processed.length + state.queue.length;
+    const total = state.processed.length + state.queue.length + runningSet.size;
     const percent = total > 0 ? Math.round((state.processed.length / total) * 100) : 0;
     const progressFill = document.getElementById('__dl-progress-fill');
     progressFill.style.width = percent + '%';
+    
+    // Atualizar porcentagem e tempo estimado
+    const percentEl = document.getElementById('progress-percent');
+    const timeEl = document.getElementById('progress-time');
+    if (percentEl) percentEl.textContent = percent + '%';
+    if (timeEl) {
+      const estimatedSeconds = getEstimatedTime();
+      if (estimatedSeconds && state.running) {
+        timeEl.textContent = '⏱️ ' + formatTime(estimatedSeconds);
+      } else if (state.running) {
+        timeEl.textContent = '⏱️ calculating...';
+      } else {
+        timeEl.textContent = '--:--';
+      }
+    }
 
     document.getElementById('btn-start').disabled = state.running || state.queue.length === 0;
     document.getElementById('btn-stop').disabled = !state.running;
