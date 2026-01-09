@@ -118,6 +118,12 @@
             <p style="margin: 5px 0 20px 0; font-size: 12px; color: #666;">Este ID identifica o tipo de documento (ATA, DECRETO, LEI, PORTARIA, etc.)</p>
         </div>
         
+        <div style="background-color: #ffebee; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #f44336;">
+            <label for="urlDocumentos" style="display: block; margin-bottom: 8px; font-weight: bold;">🔴 URL Base dos Documentos (Obrigatório):</label>
+            <input type="text" id="urlDocumentos" placeholder="Ex: https://seu-servidor.com/documentos/" required style="padding: 10px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; margin-bottom: 8px;"/>
+            <p style="margin: 5px 0 0 0; font-size: 12px; color: #c62828;">Este campo é obrigatório. Use com barra no final (ex: .../documentos/).</p>
+        </div>
+        
         <p>Selecione os arquivos PDF de decretos para extrair as informações</p>
         <input type="file" id="pdfInput" accept=".pdf" multiple style="display: none;">
         <button onclick="document.getElementById('pdfInput').click()">Selecionar PDFs</button>
@@ -132,6 +138,7 @@
         document.getElementById('pdfInput').addEventListener('change', async function(e) {
             const files = Array.from(e.target.files);
             const numeroDocumento = document.getElementById('numeroDoDocumento').value.trim();
+            const urlDocumentos = document.getElementById('urlDocumentos').value.trim();
             
             // Validar se o ID foi preenchido
             if (!numeroDocumento) {
@@ -140,6 +147,20 @@
                     <div style="background-color: #ffebee; padding: 15px; border-radius: 8px; border-left: 4px solid #f44336;">
                         <h3 style="margin: 0 0 10px 0; color: #c62828;">⚠️ Erro: ID de Documentação Obrigatório</h3>
                         <p style="margin: 0; color: #d32f2f;">É obrigatório preencher o ID de Documentação antes de selecionar os arquivos. Este ID identifica o tipo de documento.</p>
+                    </div>
+                `;
+                // Limpar seleção de arquivo
+                document.getElementById('pdfInput').value = '';
+                return;
+            }
+            
+            // Validar se a URL foi preenchida
+            if (!urlDocumentos) {
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = `
+                    <div style="background-color: #ffebee; padding: 15px; border-radius: 8px; border-left: 4px solid #f44336;">
+                        <h3 style="margin: 0 0 10px 0; color: #c62828;">⚠️ Erro: URL Base Obrigatória</h3>
+                        <p style="margin: 0; color: #d32f2f;">É obrigatório preencher a URL Base dos Documentos antes de selecionar os arquivos. Exemplo: https://seu-servidor.com/documentos/</p>
                     </div>
                 `;
                 // Limpar seleção de arquivo
@@ -401,7 +422,7 @@
                 data: data,
                 letra: null,
                 descricao: descricao.toUpperCase() || null,
-                url: `https://api-riosono.barcodigital.com.br/arquivo/riosono.to.leg.br/documentos-site/${encodeURIComponent(nomeArquivo)}`,
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: 'ATA'
             };
         }
@@ -609,11 +630,11 @@
             return {
                 numero: document.getElementById('numeroDoDocumento').value,
                 arquivo: nomeArquivo,
-                numeroDoDocumento: numeroDoDocumento.includes('/') ? numeroDoDocumento.split('/')[0] : numerodoDocumento ? numeroDoDocumento : null ,
+                numeroDoDocumento: numeroDoDocumento.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null ,
                 data: data,
                 letra: null,
                 descricao: descricao.toUpperCase() || null,
-                url: `https://api-riosono.barcodigital.com.br/arquivo/riosono.to.leg.br/documentos-site/${encodeURIComponent(nomeArquivo)}`,
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: 'PROJETO DE LEI'
             };
         }
@@ -748,7 +769,7 @@
                 data: data,
                 letra: null,
                 descricao: descricao.toUpperCase() || null,
-                url: `https://api-riosono.barcodigital.com.br/arquivo/riosono.to.leg.br/documentos-site/${encodeURIComponent(nomeArquivo)}`,
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: 'PROJETO DE LEI'
             };
         }
@@ -891,34 +912,34 @@
                 data: data,
                 letra: null,
                 descricao: descricao.toUpperCase() || null,
-                url: `https://api-riosono.barcodigital.com.br/arquivo/riosono.to.leg.br/documentos-site/${encodeURIComponent(nomeArquivo)}`,
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: 'PORTARIA'
             };
         }
 
         function extrairInformacoes(texto, nomeArquivo) {
             // Verificar se é uma ATA
-            const isAta = /ATA\s+DA?\s+/i.test(texto);
+            const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 100));
             
             if (isAta) {
                 return extrairInformacoesAta(texto, nomeArquivo);
             }
             
             // Verificar se é um PROJETO DE LEI
-            const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto);
+            const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 100));
             
             if (isProjetoLei) {
                 return extrairInformacoesProjetoLei(texto, nomeArquivo);
             }
 
             // Verificar se é PORTARIA
-            const isPortaria = /PORTARIA\s+N["ºª°\s]+/i.test(texto);
+            const isPortaria = /PORTARIA\s+N["ºª°\s]+/i.test(texto.substring(0, 100));
             if (isPortaria) {
                 return extrairInformacoesPortaria(texto, nomeArquivo);
             }
 
             // Verificar se é Lei
-            const isLei = /LEI\s+N["ºª°\s]+/i.test(texto);
+            const isLei = /LEI\s+N["ºª°\s]+/i.test(texto.substring(0, 100));
             if (isLei) {
                 return extrairInformacoesLei(texto, nomeArquivo);
             }
@@ -1091,7 +1112,7 @@
                 data: data || null,
                 letra: letraDoDocumento || null,
                 descricao: descricao.toUpperCase() || null,
-                url: `https://api-riosono.barcodigital.com.br/arquivo/riosono.to.leg.br/documentos-site/${encodeURIComponent(nomeArquivo)}`
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
             };
         }
 
