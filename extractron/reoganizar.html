@@ -24,6 +24,19 @@
     </style>
 </head>
 <body class="min-h-screen bg-base-200">
+    <!-- Banner fixo para status de processamento -->
+    <div id="processingBanner" class="hidden fixed top-0 inset-x-0 z-50">
+        <div class="max-w-4xl mx-auto px-4 pt-3">
+            <div class="alert bg-base-100 shadow-2xl border border-base-300">
+                <span class="loading loading-spinner loading-md"></span>
+                <div>
+                    <h3 class="font-bold text-sm">Processando arquivos...</h3>
+                    <p id="processingText" class="text-xs opacity-80">Preparando...</p>
+                    <progress id="processingProgress" class="progress progress-primary w-full mt-2" value="0" max="100"></progress>
+                </div>
+            </div>
+        </div>
+    </div>
     <div class="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8">
         <div class="card bg-base-100 shadow-2xl fade-in">
             <div class="card-body">
@@ -186,6 +199,8 @@
                     </div>
                 </div>
             `;
+            // Exibir banner global de processamento
+            updateProgress(0, totalFiles, 'Iniciando...');
             
             const totalFiles = files.length;
             let processedCount = 0;
@@ -202,7 +217,7 @@
             const decretos = await Promise.all(
                 files.map(async (file) => {
                     try {
-                        const decreto = await processarPDF(file);
+                        const decreto = await processarPDF(file, numeroDocumento, urlDocumentos);
                         processedCount++;
                         updateProgress(processedCount, totalFiles, `Processados: ${processedCount}/${totalFiles}`);
                         return decreto;
@@ -231,6 +246,7 @@
             
             // Download automático dos arquivos
             downloadArquivos(documentosValidos, documentosFalhos);
+            hideProgress();
             
             console.log('ID de Documentação:', numeroDocumento);
             console.log('Documentos válidos:', documentosValidos);
@@ -241,11 +257,27 @@
             const progressContainer = document.getElementById('progressContainer');
             const progressText = document.getElementById('progressText');
             const progressFill = document.getElementById('progressFill');
-            
-            progressContainer.style.display = 'block';
+
+            const banner = document.getElementById('processingBanner');
+            const bannerText = document.getElementById('processingText');
+            const bannerFill = document.getElementById('processingProgress');
+
             const percentage = Math.round((current / total) * 100);
-            progressFill.value = percentage;
-            progressText.textContent = `${message} - ${percentage}%`;
+
+            // Banner global no topo
+            if (banner) banner.classList.remove('hidden');
+            if (bannerText) bannerText.textContent = message;
+            if (bannerFill) bannerFill.value = percentage;
+            
+            // Cartão local na página
+            if (progressContainer) progressContainer.style.display = 'block';
+            if (progressFill) progressFill.value = percentage;
+            if (progressText) progressText.textContent = `${message} - ${percentage}%`;
+        }
+
+        function hideProgress() {
+            const banner = document.getElementById('processingBanner');
+            if (banner) banner.classList.add('hidden');
         }
 
         function validarDocumentos(documentos, camposObrigatorios) {
@@ -327,7 +359,7 @@
             alert(mensagem);
         }
 
-        async function processarPDF(file) {
+        async function processarPDF(file, numeroDocumento, urlDocumentos) {
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             
@@ -351,7 +383,7 @@
             }
             
             // Extrair informações usando regex
-            const decreto = extrairInformacoes(textoCompleto, file.name);
+            const decreto = extrairInformacoes(textoCompleto, file.name, numeroDocumento, urlDocumentos);
             return decreto;
         }
 
@@ -384,7 +416,7 @@
             }
         }
 
-        function extrairInformacoesAta(texto, nomeArquivo) {
+        function extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
             // Extrair número da sessão - formatos: "Iº", "IIº", "1º", "2ª", etc.
             const regexNumeroAta = /ATA\s+DA?\s+([IVXivx]+|[\d]+)[ºª°]/i;
             const matchNumero = texto.match(regexNumeroAta);
@@ -431,7 +463,7 @@
             }
             
             return {
-                numero: document.getElementById('numeroDoDocumento').value,
+                numero: numeroDocumento,
                 arquivo: nomeArquivo,
                 numeroDoDocumento: numeroDoDocumento,
                 data: data,
@@ -519,7 +551,7 @@
             return `Aos ${diaExtenso} dias do mês de ${mesesExtenso[mes - 1]} de ${anoExtenso}`;
         }
 
-        function extrairInformacoesProjetoLei(texto, nomeArquivo) {
+        function extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
             // Extrair número do projeto de lei - formato: "N" 002/2024" ou "Nº 002/2024"
             const regexNumeroProjeto = /PROJETO\s+DE\s+LEI\s+N["ºª°\s]+(\d+(?:[\.\/\-]\d+)*)/i;
             const matchNumero = texto.match(regexNumeroProjeto);
@@ -644,7 +676,7 @@
             }
             
             return {
-                numero: document.getElementById('numeroDoDocumento').value,
+                numero: numeroDocumento,
                 arquivo: nomeArquivo,
                 numeroDoDocumento: numeroDoDocumento?.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null ,
                 data: data,
@@ -655,7 +687,7 @@
             };
         }
 
-        function extrairInformacoesLei(texto, nomeArquivo) {
+        function extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
             // Extrair número de lei - formato: "N" 002/2024" ou "Nº 002/2024"
             const regexNumeroProjeto = /LEI\s+N["ºª°\s]+(\d+(?:[\.\/\-]\d+)*)/i;
             const matchNumero = texto.match(regexNumeroProjeto);
@@ -780,7 +812,7 @@
             }
             
             return {
-                numero: document.getElementById('numeroDoDocumento').value,
+                numero: numeroDocumento,
                 arquivo: nomeArquivo,
                 numeroDoDocumento: numeroDoDocumento?.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null,
                 data: data,
@@ -791,30 +823,64 @@
             };
         }
 
-        function extrairInformacoesPortaria(texto, nomeArquivo) {
-            // Extrair número da portaria - formato: "N° 001/2025" ou "Nº 001/2025" ou "N° 001" ou "N. 001"
-            // Regex mais flexível para capturar diferentes formatos
-            const regexNumeroPortaria = /PORTARIA(?:\s+MUNICIPAL)?\s+N[°ºª.\s]+?(\d+)(?:[-\/](\d{4}))?(?:[-\/]([A-Z]))?/i;
-            const matchNumero = texto.match(regexNumeroPortaria);
+        function extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
+            // Extrair número da portaria - MÚLTIPLOS PADRÕES para maior cobertura
+            const regexPatterns = [
+                // Padrão 1: PORTARIA [MUNICIPAL] N° 123/2024 ou N° 123-A
+                /PORTARIA(?:\s+MUNICIPAL)?\s+N[°ºª\s]*[\s.]*(\d+)(?:[-\/](\d{4}))?(?:[-\/]([A-Z]))?/i,
+                
+                // Padrão 2: PORTARIA [MUNICIPAL] No 123 (letra O maiúscula)
+                /PORTARIA(?:\s+MUNICIPAL)?\s+N[oO][\s.]*(\d+)(?:[-\/](\d{4}))?(?:[-\/]([A-Z]))?/i,
+                
+                // Padrão 3: Com quebras de linha entre PORTARIA e número
+                /PORTARIA(?:\s+MUNICIPAL)?[\s\n]+N[°ºªoO\s.]*[\s\n]*(\d+)(?:[-\/](\d{4}))?/i,
+                
+                // Padrão 4: Apenas "N° 123/2024" sem palavra PORTARIA antes
+                /\bN[°ºª\s]*[\s.]*(\d+)\/(\d{4})(?:-([A-Z]))?/i,
+                
+                // Padrão 5: Número no nome do arquivo (fallback)
+                null // Será tratado separadamente
+            ];
             
             let numeroDoDocumento = null;
             let anoPortaria = null;
             let letraPortaria = null;
+            let matchNumero = null;
+            let padraoUsado = -1;
             
-            if (matchNumero) {
-                numeroDoDocumento = matchNumero[1]; // Número principal
-                anoPortaria = matchNumero[2]; // Ano (opcional)
-                letraPortaria = matchNumero[3]; // Letra (opcional)
-                
-                // Montar número completo se houver ano ou letra
+            // Tentar cada padrão
+            for (let i = 0; i < regexPatterns.length - 1; i++) {
+                matchNumero = texto.match(regexPatterns[i]);
+                if (matchNumero) {
+                    padraoUsado = i + 1;
+                    numeroDoDocumento = matchNumero[1];
+                    anoPortaria = matchNumero[2];
+                    letraPortaria = matchNumero[3];
+                    break;
+                }
+            }
+            
+            // Fallback: Tentar extrair do nome do arquivo (N13.pdf, N110-A.pdf, etc)
+            if (!numeroDoDocumento) {
+                const regexNomeArquivo = /\b[NnPp][\s._-]*(\d+)(?:[-]([A-Z]))?(?:[-\/](\d{4}))?/;
+                const matchArquivo = nomeArquivo.match(regexNomeArquivo);
+                if (matchArquivo) {
+                    numeroDoDocumento = matchArquivo[1];
+                    letraPortaria = matchArquivo[2]; // Captura a letra do arquivo
+                    anoPortaria = matchArquivo[3];
+                    padraoUsado = 6; // Padrão do nome do arquivo
+                }
+            }
+            
+            // Guardar o número original antes de montar número completo
+            const numeroOriginal = numeroDoDocumento;
+            
+            // Montar número completo apenas para numeroDoDocumento
+            if (numeroDoDocumento) {
                 if (anoPortaria) {
                     numeroDoDocumento = `${numeroDoDocumento}/${anoPortaria}`;
-                    if (letraPortaria) {
-                        numeroDoDocumento = `${numeroDoDocumento}-${letraPortaria}`;
-                    }
-                } else if (letraPortaria) {
-                    numeroDoDocumento = `${numeroDoDocumento}-${letraPortaria}`;
                 }
+                // NÃO incluir a letra no numeroDoDocumento - ela vai no campo 'letra' separado
             }
             
             // Mapa de meses em português
@@ -940,43 +1006,57 @@
             }
             
             return {
-                numero: document.getElementById('numeroDoDocumento').value,
+                numero: numeroDocumento,
                 arquivo: nomeArquivo,
                 numeroDoDocumento: numeroDoDocumento,
                 data: data,
-                letra: null,
+                letra: letraPortaria || null,
                 descricao: descricao.toUpperCase() || null,
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: 'PORTARIA'
             };
         }
 
-        function extrairInformacoes(texto, nomeArquivo) {
+        function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
+            // VERIFICAÇÃO PRIORITÁRIA POR NOME DE ARQUIVO
+            // Se o nome do arquivo começa com "N" seguido de números ou contém "PORTARIA", é PORTARIA
+            if (/^N\d+/i.test(nomeArquivo) || /PORTARIA/i.test(nomeArquivo)) {
+                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos);
+            }
+            console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 200));
+            
             // Verificar se é uma ATA
             const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 100));
             
             if (isAta) {
-                return extrairInformacoesAta(texto, nomeArquivo);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA`);
+                return extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos);
             }
             
             // Verificar se é um PROJETO DE LEI
             const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 100));
             
             if (isProjetoLei) {
-                return extrairInformacoesProjetoLei(texto, nomeArquivo);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROJETO DE LEI`);
+                return extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos);
             }
 
-            // Verificar se é PORTARIA
-            const isPortaria = /PORTARIA\s+N["ºª°\s]+/i.test(texto.substring(0, 100));
-            if (isPortaria) {
-                return extrairInformacoesPortaria(texto, nomeArquivo);
+            // Verificar se é PORTARIA pelo conteúdo
+            const temPalavraPortaria = /PORTARIA/i.test(texto.substring(0, 200));
+            
+            if (temPalavraPortaria) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo texto`);
+                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos);
             }
 
             // Verificar se é Lei
             const isLei = /LEI\s+N["ºª°\s]+/i.test(texto.substring(0, 100));
             if (isLei) {
-                return extrairInformacoesLei(texto, nomeArquivo);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI`);
+                return extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos);
             }
+            
+            console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO (padrão)`);
             
             // Padrões para extrair informações de DECRETO
             
@@ -1141,7 +1221,7 @@
             }
             
             return {
-                numero: document.getElementById('numeroDoDocumento').value,
+                numero: numeroDocumento,
                 arquivo: nomeArquivo,
                 numeroDoDocumento: numeroDoDocumento?.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null,
                 data: data || null,
