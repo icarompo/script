@@ -115,6 +115,11 @@
       if (el.dataset && el.dataset.package) return `pkg:${el.dataset.package}`;
       if (el.dataset && el.dataset.id) return `id:${el.dataset.id}`;
       
+      // Se tem URL válida e única, usar ela como chave principal
+      if (href && href !== document.baseURI && href.length > 10) {
+        return 'url:' + href;
+      }
+      
       const cont = getContainer(el);
       const contId = cont.getAttribute('id') || cont.getAttribute('data-id') || cont.getAttribute('data-package-id');
       if (contId) return 'cont:' + contId;
@@ -122,8 +127,6 @@
       const btnText = norm(el.innerText || el.textContent || '').slice(0, 100);
       const contText = norm(cont.innerText || '').slice(0, 200);
       const combined = btnText + '|' + contText;
-      
-      if (href && href !== document.baseURI) return 'url:' + href + '|txt:' + hash(combined);
       
       return 'txt:' + hash(combined) + ':idx:' + idx;
     };
@@ -141,6 +144,8 @@
       'a[href$=".ppt"], a[href$=".pptx"], a[href$=".zip"], a[href$=".rar"], a[href$=".7z"], ' +
       'a[href$=".odt"], a[href$=".ods"], a[href$=".txt"], a[href$=".csv"], a[href$=".rtf"]',
       'a.wpdm-download-button, a.wpdm-download-link',
+      'a.elementor-button, a.elementor-button-link',
+      'a.nt_btn',
       '[data-download], [data-file]'
     ].join(',');
 
@@ -230,6 +235,7 @@
       const map = new Map();
       for (const it of all) if (!map.has(it.key)) map.set(it.key, it);
 
+      console.log('[BAIXATRON] 🔍 Collect: elementos brutos:', all.length, '| únicos após dedupe:', map.size);
       return Array.from(map.values());
     };
 
@@ -238,19 +244,27 @@
     // ============================================
     const scan = () => {
       const items = collect();
+      console.log('[BAIXATRON] 📊 Coleta: encontrados', items.length, 'botões únicos');
+      
       state.queue = [];
       state.queuedKeys.clear();
       state.selectedKeys.clear();
       let added = 0;
+      let skipped = 0;
       
       for (const it of items) {
-        if (opts.dedupe && state.doneKeys.has(it.key)) continue;
+        if (opts.dedupe && state.doneKeys.has(it.key)) {
+          skipped++;
+          console.log('[BAIXATRON] ⏭️ Pulando (já processado):', it.text?.slice(0, 40));
+          continue;
+        }
         state.queue.push(it);
         state.queuedKeys.add(it.key);
         state.selectedKeys.add(it.key);
         added++;
       }
 
+      console.log('[BAIXATRON] ✅ Adicionados:', added, '| ⏭️ Pulados:', skipped, '| 📝 Total histórico:', state.doneKeys.size);
       updateUI();
       return items;
     };
@@ -262,6 +276,7 @@
 
     const safeClick = async it => {
       const el = it.el;
+      const url = toAbs(it.url);
       
       try {
         el.scrollIntoView({ block: 'center' });
@@ -269,23 +284,101 @@
       
       await wait(100);
       
-      // Click no elemento para iniciar download
+      // Download direto via Fetch + Blob (melhor compatibilidade, sem abrir abas)
       try {
-        if (typeof el.click === 'function') {
-          el.click();
-        } else {
-          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        // Fazer fetch do arquivo
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
+        
+        // Receber como octet-stream para forçar download (não abrir PDF)
+        const blob = await response.blob();
+        const downloadBlob = new Blob([blob], { type: 'application/octet-stream' });
+        const blobUrl = URL.createObjectURL(downloadBlob);
+        
+        // Extrair nome do arquivo da URL ou usar texto do botão
+        let fileName = '';
+        if (url) {
+          const urlParts = url.split('/');
+          const lastPart = urlParts[urlParts.length - 1];
+          fileName = lastPart.split('?')[0].split('#')[0];
+        }
+        
+        // Se não conseguiu nome válido, usar texto do botão
+        if (!fileName || fileName.length < 3) {
+          const cleanText = (it.text || 'download')
+            .replace(/[^a-z0-9]/gi, '_')
+            .substring(0, 50);
+          fileName = cleanText + '.pdf';
+        }
+        
+        // Criar elemento <a> com blob URL
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fileName;
+        a.style.display = 'none'; // Garantir que não seja visível
+        
+        // Adicionar ao DOM e clicar
+        document.body.appendChild(a);
+        a.click();
+        
+        // Limpar
+        await wait(100);
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+        
       } catch (e) {
-        // Fallback: tentar abrir URL em nova aba
-        if (it.url) {
-          try { 
-            window.open(it.url, '_blank'); 
-          } catch (e2) {
-            throw e;
+        console.warn('[BAIXATRON] ⚠️ Erro no Fetch, tentando fallback:', e.message);
+        
+        // Fallback 1: tentar com URL direto (se mesmo domínio)
+        try {
+          const a = document.createElement('a');
+          a.href = url;
+          
+          let fileName = '';
+          if (url) {
+            const urlParts = url.split('/');
+            const lastPart = urlParts[urlParts.length - 1];
+            fileName = lastPart.split('?')[0].split('#')[0];
           }
-        } else {
-          throw e;
+          
+          if (!fileName || fileName.length < 3) {
+            const cleanText = (it.text || 'download')
+              .replace(/[^a-z0-9]/gi, '_')
+              .substring(0, 50);
+            fileName = cleanText + '.pdf';
+          }
+          
+          a.download = fileName;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          
+          await wait(100);
+          document.body.removeChild(a);
+          
+        } catch (e2) {
+          // Fallback 2: tentar click no elemento original
+          try {
+            if (typeof el.click === 'function') {
+              el.click();
+            } else {
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            }
+          } catch (e3) {
+            // Fallback 3: abrir URL (último recurso)
+            if (url) {
+              try { 
+                window.open(url, '_blank'); 
+              } catch (e4) {
+                throw e;
+              }
+            } else {
+              throw e;
+            }
+          }
         }
       }
     };
@@ -407,6 +500,18 @@
       updateUI();
     };
 
+    const clearHistory = () => {
+      state.doneKeys.clear();
+      state.processed = [];
+      state.errors = [];
+      console.log('[BAIXATRON] 🗑️ Histórico limpo! Escaneando novamente...');
+      updateUI();
+      // Escanear automaticamente após limpar histórico
+      setTimeout(() => {
+        scan();
+      }, 100);
+    };
+
     const setOptions = newOpts => { 
       Object.assign(opts, newOpts || {});
     };
@@ -477,7 +582,7 @@
     };
 
     window.__dl = { 
-      start, stop, reset, scan,
+      start, stop, reset, scan, clearHistory,
       selectAll, deselectAll, toggleSelect,
       setOptions, opts, state,
       toggleTheme
@@ -702,6 +807,25 @@
 
       #__dl-panel.light-mode #__dl-list::-webkit-scrollbar-thumb:hover {
         background: #999;
+      }
+
+      #__dl-panel.light-mode #__dl-warning {
+        background: #fff3cd !important;
+        color: #856404 !important;
+        border-left-color: #ffc107 !important;
+      }
+
+      #__dl-warning {
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      #__dl-warning:hover {
+        opacity: 0.8;
+      }
+
+      #__dl-warning.hidden {
+        display: none !important;
       }
 
       #__dl-stats {
@@ -1011,6 +1135,20 @@
           </div>
         </div>
 
+        <div id="__dl-warning" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 0; font-size: 11px; color: #856404; display: flex; gap: 8px; align-items: flex-start;">
+          <span style="font-size: 16px; flex-shrink: 0;">⚠️</span>
+          <div style="flex: 1;">
+            <strong>Aviso de Segurança:</strong>
+            <p style="margin: 4px 0 0 0;"><strong>O navegador pode pedir confirmação para downloads.</strong> Opções:</p>
+            <ul style="margin: 4px 0 0 0; padding-left: 20px;">
+              <li>Se aparecer caixa: marque <strong>"Sempre fazer isso"</strong> (nem todos navegadores mostram)</li>
+              <li>Senão: confirme cada download ou configure preferências do navegador</li>
+              <li>Aumente o delay entre downloads se necessário</li>
+            </ul>
+            <p style="margin: 4px 0 0 0; font-size: 10px; opacity: 0.8;">Clique aqui para fechar este aviso.</p>
+          </div>
+        </div>
+
         <div id="__dl-stats">
           <div class="stat-item">
             <span class="stat-label">Fila</span>
@@ -1052,7 +1190,8 @@
           <button class="btn btn-secondary" id="btn-stop" disabled>[⏸] Pausar</button>
           <button class="btn btn-secondary" id="btn-select-all">[+] Todos</button>
           <button class="btn btn-secondary" id="btn-deselect-all">[-] Nenhum</button>
-          <button class="btn btn-danger" id="btn-reset">[↻] Reset</button>
+          <button class="btn btn-secondary" id="btn-clear-history">[🗑️] Limpar Histórico</button>
+          <button class="btn btn-danger" id="btn-reset">[↻] Reset Total</button>
         </div>
 
         <div id="__dl-list"></div>
@@ -1074,12 +1213,21 @@
 
       document.getElementById('__dl-close').onclick = () => panel.remove();
       document.getElementById('__dl-theme-toggle').onclick = () => toggleTheme();
+      document.getElementById('__dl-warning').onclick = () => {
+        document.getElementById('__dl-warning').classList.add('hidden');
+        localStorage.setItem('__dl-warning-closed', 'true');
+      };
       document.getElementById('btn-scan').onclick = () => { scan(); };
       document.getElementById('btn-start').onclick = () => start();
       document.getElementById('btn-stop').onclick = () => stop();
       document.getElementById('btn-select-all').onclick = () => selectAll();
       document.getElementById('btn-deselect-all').onclick = () => deselectAll();
-      document.getElementById('btn-reset').onclick = () => { if (confirm('Resetar tudo?')) reset(); };
+      document.getElementById('btn-clear-history').onclick = () => { 
+        if (confirm('Limpar histórico de downloads? Isso permitirá escanear novamente todos os arquivos.')) clearHistory(); 
+      };
+      document.getElementById('btn-reset').onclick = () => { 
+        if (confirm('Resetar TUDO (fila + histórico)?')) reset(); 
+      };
       
       document.getElementById('speed-slider').onchange = (e) => {
         const value = parseInt(e.target.value);
@@ -1088,6 +1236,12 @@
       };
 
       enableDrag(panel, document.getElementById('__dl-header'));
+      
+      // Verificar se aviso foi fechado antes
+      if (localStorage.getItem('__dl-warning-closed') === 'true') {
+        document.getElementById('__dl-warning').classList.add('hidden');
+      }
+      
       // Aplicar tema salvo
       const savedTheme = localStorage.getItem('__dl-theme') || 'dark';
       if (savedTheme === 'light') {
