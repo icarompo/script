@@ -10,8 +10,8 @@
     errors: 0,
     skipped: 0,
     percent: 0,
-    theme: localStorage.getItem('__marcelo-theme') || 'dark',
-    speedFactor: parseFloat(localStorage.getItem('__marcelo-speedFactor') || '1'),
+    theme: localStorage.getItem('__formtron-theme') || 'dark',
+    speedFactor: parseFloat(localStorage.getItem('__formtron-speedFactor') || '1'),
     startedAt: null,
     sumItemDuration: 0,
   };
@@ -77,7 +77,7 @@
   };
 
   // =============================
-  // UI: Painel Marcelo
+  // UI: Painel Formtron
   // =============================
   const CSS = `
     * { box-sizing: border-box; }
@@ -216,7 +216,7 @@
       state.theme = 'dark';
       panel.classList.remove('light');
     }
-    localStorage.setItem('__marcelo-theme', state.theme);
+    localStorage.setItem('__formtron-theme', state.theme);
   };
 
   const renderPanel = () => {
@@ -229,7 +229,7 @@
     if (state.theme === 'light') panel.classList.add('light');
     panel.innerHTML = `
       <div id="marcelo-header">
-        <div id="marcelo-title">🧩 Marcelo — Automação</div>
+        <div id="marcelo-title">🧩 Formtron — Automação</div>
         <div id="marcelo-actions">
           <button id="m-theme" class="m-btn-icon" title="Tema">${state.theme === 'light' ? '☀️' : '🌙'}</button>
           <button id="m-min" class="m-btn-icon" title="Minimizar">➖</button>
@@ -365,7 +365,7 @@
     speed.oninput = (e) => {
       state.speedFactor = parseFloat(e.target.value || '1');
       speedLbl.textContent = `${state.speedFactor.toFixed(2)}x`;
-      localStorage.setItem('__marcelo-speedFactor', String(state.speedFactor));
+      localStorage.setItem('__formtron-speedFactor', String(state.speedFactor));
     };
 
     // Atalhos
@@ -544,13 +544,13 @@
   };
 
   // Expor API mínima
-  window.__marcelo = {
+  window.__formtron = {
     pause: () => (state.paused = true),
     resume: () => (state.paused = false),
     stop: () => (state.stopped = true),
     setSpeed: (f) => {
       state.speedFactor = Math.max(0.25, Math.min(4, Number(f) || 1));
-      localStorage.setItem('__marcelo-speedFactor', String(state.speedFactor));
+      localStorage.setItem('__formtron-speedFactor', String(state.speedFactor));
       const lbl = document.getElementById('m-speed-label');
       if (lbl) lbl.textContent = `${state.speedFactor.toFixed(2)}x`;
     },

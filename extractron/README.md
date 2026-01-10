@@ -4,16 +4,17 @@ Sistema de extração automática de dados de decretos municipais a partir de ar
 
 ## Descrição
 
-EXTRACTRON é uma ferramenta web que processa arquivos PDF de decretos municipais, extraindo automaticamente informações estruturadas como número do decreto, data, letra identificadora e descrição do conteúdo. Suporta tanto PDFs com texto nativo quanto documentos digitalizados através de OCR.
+EXTRACTRON é uma ferramenta web que processa arquivos PDF de decretos municipais, extraindo automaticamente informações estruturadas como número do decreto, data, letra identificadora e descrição do conteúdo. Suporta tanto PDFs com texto nativo quanto documentos digitalizados através de OCR e agora traz um painel visual inspirado no Baixatron para acompanhar o progresso.
 
 ## Funcionalidades
 
+- **Painel estilo Baixatron**: Dashboard fixo no topo com status, barra de progresso e estatísticas (total, processados, pendentes, erros)
 - **Extração de Texto Nativo**: Utiliza PDF.js para ler PDFs com texto selecionável
 - **OCR Integrado**: Tesseract.js processa automaticamente PDFs digitalizados quando necessário
 - **Processamento em Lote**: Arraste múltiplos arquivos PDF para processamento paralelo
 - **Detecção Automática**: Identifica o tipo de PDF e seleciona o método de extração adequado
 - **Exportação JSON**: Gera arquivo estruturado pronto para importação em sistemas
-- **Interface Intuitiva**: Drag-and-drop com feedback visual de progresso
+- **Interface Intuitiva**: Drag-and-drop com feedback visual de progresso (banner fixo + painel)
 
 ## Tecnologias Utilizadas
 

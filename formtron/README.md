@@ -10,11 +10,12 @@ FORMTRON é um script de automação que lê dados estruturados em JSON e preenc
 
 ### Painel de Controle Interativo
 
-- **Pausar/Retomar**: Interrompa e continue o processo a qualquer momento
+- **Pausar/Retomar**: Interrompa e continue o processo a qualquer momento (atalhos: Espaço, S, T)
 - **Parar Definitivamente**: Encerra a execução mantendo registro de progresso
 - **Iniciar de Decreto Específico**: Retome a partir de qualquer item da lista
-- **Barra de Progresso**: Acompanhamento visual em tempo real
-- **Estatísticas**: Total processado, taxa de sucesso, tempo decorrido
+- **Barra de Progresso + ETA**: Percentual e tempo restante estimado pelo tempo médio por item
+- **Estatísticas**: Total, processados, pendentes, erros e tempo decorrido
+- **Tema e Velocidade**: Tema claro/escuro persistente e slider de velocidade (0.25x–3x)
 
 ### Recursos Avançados
 
@@ -48,7 +49,7 @@ Certifique-se de ter o arquivo JSON gerado pelo **EXTRACTRON**:
 2. Abra o Console de Desenvolvedor (F12)
 3. Cole todo o conteúdo de `formtron.js`
 4. Pressione Enter para iniciar
-5. Use o painel flutuante para controlar a execução
+5. Use o painel flutuante para controlar a execução (tema, velocidade, pausa/continua)
 
 ### 3. Controles Disponíveis
 
