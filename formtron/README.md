@@ -24,6 +24,7 @@ FORMTRON é um script de automação que lê dados estruturados em JSON e preenc
 - **Logs Detalhados**: Registro completo de cada operação no console
 - **Modo Debug**: Informações técnicas sobre cada etapa do processo
 - **Recuperação de Erros**: Continua processamento mesmo após falhas individuais
+- **Registro de Falhas**: Exporta JSON com todos os documentos que falharam e os motivos
 
 ## Uso
 
@@ -116,6 +117,37 @@ Quando o servidor retorna limite de requisições:
 - Marca item como falha
 - Continua com próximo item
 - Exibe resumo ao final
+
+### Exportação de Falhas
+
+Ao final do processamento, se houver documentos que falharam:
+- Contador de falhas é atualizado no painel
+- Botão "📥 Baixar Falhas" é habilitado
+- Clique para baixar JSON com estrutura:
+
+```json
+[
+  {
+    "numero": "245",
+    "arquivo": "Lei-no-279-2017.pdf",
+    "numeroDoDocumento": null,
+    "data": "02/02/2017",
+    "letra": null,
+    "descricao": "DISPÕE SOBRE...",
+    "url": "[object HTMLInputElement]Lei-no-279-2017.pdf",
+    "motivos_falha": [
+      "Número do documento ausente ou inválido"
+    ]
+  }
+]
+```
+
+Os motivos de falha incluem:
+- Campos obrigatórios ausentes (número, data, descrição)
+- Erros do sistema (código 6208: documento duplicado)
+- Elementos não encontrados na página
+- Timeout no salvamento
+- Erros de validação
 
 ### Erros de Validação
 
