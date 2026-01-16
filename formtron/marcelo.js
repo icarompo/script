@@ -327,6 +327,8 @@
       state.stopped = false;
       state.paused = false;
       state.running = true;
+      state.currentIndex = 0;
+      state.processed = 0;
       state.startedAt = Date.now();
       state.sumItemDuration = 0;
       btnPause.disabled = false;
@@ -465,7 +467,7 @@
         await scaledSleep(2000);
         click('#tipo_documento > div');
         await scaledSleep(400);
-        click('#tipo_documento_34');
+        click('#tipo_documento_1');
         await scaledSleep(400);
 
         // 2. Número
