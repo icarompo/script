@@ -14,7 +14,6 @@
     speedFactor: parseFloat(localStorage.getItem('__marcelo-speedFactor') || '1'),
     startedAt: null,
     sumItemDuration: 0,
-    falhas: [],
   };
 
   let arquivos = [];
@@ -170,7 +169,7 @@
       ativos: state.running && !state.paused ? 1 : 0,
       proc: state.processed,
       sel: arquivosFiltrados.length,
-      err: state.falhas.length,
+      err: state.errors,
     };
     const total = state.total || 0;
     const pct = total ? Math.round((state.processed / total) * 100) : 0;
@@ -191,10 +190,6 @@
     if (qEls.proc) qEls.proc.textContent = String(q.proc);
     if (qEls.sel) qEls.sel.textContent = String(q.sel);
     if (qEls.err) qEls.err.textContent = String(q.err);
-    const btnDownloadFalhas = document.getElementById('m-download-falhas');
-    const falhasCountEl = document.getElementById('m-falhas-count');
-    if (falhasCountEl) falhasCountEl.textContent = String(q.err);
-    if (btnDownloadFalhas) btnDownloadFalhas.disabled = q.err === 0;
     const prog = document.getElementById('marcelo-progress-label');
     if (prog) prog.textContent = `${state.currentIndex} / ${state.total}`;
 
@@ -268,7 +263,6 @@
           <button id="m-start" class="m-btn primary" disabled>▶ Iniciar</button>
           <button id="m-pause" class="m-btn" disabled>⏸ Pausar</button>
           <button id="m-stop" class="m-btn danger">⏹ Parar</button>
-          <button id="m-download-falhas" class="m-btn" style="grid-column: span 3;" disabled>📥 Baixar Falhas (<span id="m-falhas-count">0</span>)</button>
           <div class="row" style="grid-column: span 3;">
             <input id="m-startfrom" type="text" placeholder="Começar a partir do decreto (ex: 123)">
             <button id="m-apply" class="m-btn">Aplicar</button>
@@ -288,7 +282,6 @@
     const btnStart = document.getElementById('m-start');
     const btnPause = document.getElementById('m-pause');
     const btnStop = document.getElementById('m-stop');
-    const btnDownloadFalhas = document.getElementById('m-download-falhas');
     const btnApply = document.getElementById('m-apply');
     const inputStart = document.getElementById('m-startfrom');
     const startInfo = document.getElementById('m-startinfo');
@@ -320,15 +313,12 @@
       setStatus('⏹️ Parando...');
       updateStats();
     };
-    if (btnDownloadFalhas) btnDownloadFalhas.onclick = () => downloadFalhas();
     btnStart.onclick = async () => {
       if (!arquivosFiltrados.length) return;
       if (state.running) return;
       state.stopped = false;
       state.paused = false;
       state.running = true;
-      state.currentIndex = 0;
-      state.processed = 0;
       state.startedAt = Date.now();
       state.sumItemDuration = 0;
       btnPause.disabled = false;
@@ -424,50 +414,13 @@
         updateStats();
 
         const itemStart = Date.now();
-        const motivosFalha = [];
-
-        // Validação básica antes de publicar
-        if (!data.numeroDoDocumento || String(data.numeroDoDocumento).trim() === '' || String(data.numeroDoDocumento).toLowerCase() === 'erro') {
-          motivosFalha.push('Número do documento ausente ou inválido');
-        }
-        if (!data.data || String(data.data).trim() === '' || String(data.data).toLowerCase() === 'erro') {
-          motivosFalha.push('Data do documento ausente');
-        }
-        if (!data.descricao || String(data.descricao).trim() === '') {
-          motivosFalha.push('Descrição do documento ausente');
-        }
-        if (!data.url || String(data.url).includes('[object HTMLInputElement]')) {
-          motivosFalha.push('Link direto inválido ou ausente');
-        }
-
-        if (motivosFalha.length > 0) {
-          // Registrar e pular publicação deste item
-          state.falhas.push({
-            numero: data.numero || null,
-            arquivo: data.arquivo || null,
-            numeroDoDocumento: data.numeroDoDocumento || null,
-            data: data.data || null,
-            letra: data.letra || null,
-            descricao: data.descricao || null,
-            url: data.url || null,
-            motivos_falha: motivosFalha,
-          });
-          state.errors++;
-          state.processed++;
-          updateStats();
-          // ir para próximo item
-          if (state.currentIndex < state.total) {
-            try { click('button[aria-label="Novo"]'); await scaledSleep(600); } catch {}
-          }
-          continue;
-        }
 
         // 1. Tipo de documento
         fillInput('#acao-form > div:nth-child(1) > div.pt-1.w-full > div:nth-child(1) > div > div:nth-child(1) > span > div > div > div:nth-child(1) > span > div > div > span > input', data.numero);
         await scaledSleep(2000);
         click('#tipo_documento > div');
         await scaledSleep(400);
-        click('#tipo_documento_1');
+        click('#tipo_documento_6');
         await scaledSleep(400);
 
         // 2. Número
@@ -517,39 +470,7 @@
             }
           } else {
             console.error(error);
-            // Tentar ler mensagem do popup (Swal ou PrimeVue)
-            let popupMsg = '';
-            const dialog = document.querySelector('.swal2-popup, .p-dialog');
-            if (dialog) popupMsg = (dialog.textContent || '').trim();
-            if (popupMsg.includes('Código: 6208') || /já existe.*numeração/i.test(popupMsg)) {
-              motivosFalha.push('Já existe um documento com esta numeração (duplicado)');
-            } else if (popupMsg) {
-              motivosFalha.push('Erro ao processar requisição: ' + popupMsg.substring(0, 140));
-            } else {
-              motivosFalha.push(error.message || 'Erro desconhecido ao salvar');
-            }
-            // Fechar o diálogo se houver
-            try { const ok = dialog?.querySelector('button'); ok?.click(); } catch {}
-            await scaledSleep(400);
-            // Registrar falha do item
-            state.falhas.push({
-              numero: data.numero || null,
-              arquivo: data.arquivo || null,
-              numeroDoDocumento: data.numeroDoDocumento || null,
-              data: data.data || null,
-              letra: data.letra || null,
-              descricao: data.descricao || null,
-              url: data.url || null,
-              motivos_falha: motivosFalha,
-            });
             state.errors++;
-            state.processed++;
-            updateStats();
-            if (state.currentIndex < state.total) {
-              setStatus('➕ Criando novo formulário...');
-              click('button[aria-label="Novo"]');
-              await scaledSleep(800);
-            }
           }
         }
       }
@@ -557,8 +478,7 @@
       if (state.stopped) {
         setStatus('⏹️ Script parado pelo usuário');
       } else {
-        const msg = state.falhas.length > 0 ? `✅ Concluído com ${state.falhas.length} falha(s)` : `✅ Concluído! ${state.total} itens processados`;
-        setStatus(msg);
+        setStatus(`✅ Concluído! ${state.total} itens processados`);
       }
     } catch (e) {
       console.error('Erro:', e);
@@ -595,22 +515,6 @@
     const remaining = Math.max(0, state.total - state.processed);
     const estMs = remaining * avgMs;
     return Math.ceil(estMs / 1000);
-  };
-
-  const downloadFalhas = () => {
-    if (!state.falhas || state.falhas.length === 0) {
-      alert('Nenhuma falha registrada para baixar.');
-      return;
-    }
-    const jsonStr = JSON.stringify(state.falhas, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    a.download = `falhas_${timestamp}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   // =============================
@@ -659,8 +563,6 @@
   // Escolher arquivo
   arquivos = await pickJson();
   if (!Array.isArray(arquivos)) arquivos = [];
-  // Resetar falhas ao carregar um novo arquivo
-  state.falhas = [];
   arquivosFiltrados = arquivos;
   state.total = arquivos.length;
   state.currentIndex = 0;

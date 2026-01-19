@@ -155,16 +155,6 @@
                                 <input checked type="checkbox" id="obrigatorio_letra" class="checkbox checkbox-primary" />
                                 <span class="label-text">Letra</span>
                             </label>
-
-                            <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
-                                <input checked type="checkbox" id="portal" class="checkbox checkbox-primary" />
-                                <span class="label-text">Portal</span>
-                            </label>
-
-                            <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
-                                <input checked type="checkbox" id="diario" class="checkbox checkbox-primary" />
-                                <span class="label-text">Dirário</span>
-                            </label>
                         </div>
                     </div>
                 </div>
@@ -223,6 +213,7 @@
             let errorCount = 0;
             const numeroDocumento = document.getElementById('select').value;
             const urlDocumentos = document.getElementById('urlDocumentos').value.trim();
+            const tipoDocumento = document.getElementById(numeroDocumento).innerText.split('/')[1];
             
             // Validar se o ID foi preenchido
             if (!numeroDocumento) {
@@ -294,14 +285,15 @@
                 numero: document.getElementById('obrigatorio_numero').checked,
                 data: document.getElementById('obrigatorio_data').checked,
                 descricao: document.getElementById('obrigatorio_descricao').checked,
-                arquivo: document.getElementById('obrigatorio_arquivo').checked
+                arquivo: document.getElementById('obrigatorio_arquivo').checked,
+                letra: document.getElementById('obrigatorio_letra').checked
             };
             
             // Processar todos os arquivos em paralelo
             const decretos = await Promise.all(
                 files.map(async (file) => {
                     try {
-                        const decreto = await processarPDF(file, numeroDocumento, urlDocumentos);
+                        const decreto = await processarPDF(file, numeroDocumento, urlDocumentos, tipoDocumento);
                         processedCount++;
                         updateProgress(processedCount, totalFiles, `Processados: ${processedCount}/${totalFiles}` , errorCount);
                         return decreto;
@@ -468,7 +460,7 @@
             alert(mensagem);
         }
 
-        async function processarPDF(file, numeroDocumento, urlDocumentos) {
+        async function processarPDF(file, numeroDocumento, urlDocumentos, tipoDocumento) {
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             
@@ -492,7 +484,7 @@
             }
             
             // Extrair informações usando regex
-            const decreto = extrairInformacoes(textoCompleto, file.name, numeroDocumento, urlDocumentos);
+            const decreto = extrairInformacoes(textoCompleto, file.name, numeroDocumento, urlDocumentos, tipoDocumento);
             return decreto;
         }
 
@@ -525,7 +517,7 @@
             }
         }
 
-        function extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
+        function extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
             // Extrair número da sessão - formatos: "Iº", "IIº", "1º", "2ª", etc.
             const regexNumeroAta = /ATA\s+DA?\s+([IVXivx]+|[\d]+)[ºª°]/i;
             const matchNumero = texto.match(regexNumeroAta);
@@ -579,7 +571,7 @@
                 letra: null,
                 descricao: descricao.toUpperCase() || null,
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
-                tipoDocumento: 'ATA'
+                tipoDocumento: tipoDocumento
             };
         }
         
@@ -660,7 +652,7 @@
             return `Aos ${diaExtenso} dias do mês de ${mesesExtenso[mes - 1]} de ${anoExtenso}`;
         }
 
-        function extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
+        function extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
             // Extrair número do projeto de lei - formato: "N" 002/2024" ou "Nº 002/2024"
             const regexNumeroProjeto = /PROJETO\s+DE\s+LEI\s+N["ºª°\s]+(\d+(?:[\.\/\-]\d+)*)/i;
             const matchNumero = texto.match(regexNumeroProjeto);
@@ -792,18 +784,20 @@
                 letra: null,
                 descricao: descricao.toUpperCase() || null,
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
-                tipoDocumento: 'PROJETO DE LEI'
+                tipoDocumento: tipoDocumento
             };
         }
 
-        function extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
+        function extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
             // Extrair número de lei - formato: "N" 002/2024" ou "Nº 002/2024"
-            const regexNumeroProjeto = /LEI\s+N["ºª°\s]+(\d+(?:[\.\/\-]\d+)*)/i;
+            const regexNumeroProjeto = /LEI\s+([A-ZÁ]*\s+)?(?:MUNICIPAL\s+)?(?:N\s*[\.]*\s*?[°ºª\s]+)?(\d+\s*[0-9]*(?:[\.\/\-]\d+)*)+/i;
             const matchNumero = texto.match(regexNumeroProjeto);
             
             let numeroDoDocumento = null;
             if (matchNumero) {
-                numeroDoDocumento = matchNumero[1];
+                console.log(matchNumero);
+                numeroDoDocumento = matchNumero[2];
+                numeroDoDocumento = numeroDoDocumento?.includes(' ') ? numeroDoDocumento?.replace(' ', '') : numeroDoDocumento;
             }
             
             // Mapa de meses em português
@@ -814,8 +808,9 @@
             };
             
             // Extrair data no formato "19 DE FEVEREIRO DE 2024"
-            const regexDataExtenso = /(\d{1,2})\s+DE\s+([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)\s+DE\s+(\d{4})/i;
-            const matchDataExtenso = texto.match(regexDataExtenso);
+            let regexDataExtenso = /(\d{1,2})(?:\s+DE\s+|\s+)([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)(?:\s+DE\s+|\s+)(\d{4})/i;
+
+            let matchDataExtenso = texto.match(regexDataExtenso);
             
             let data = null;
             
@@ -827,6 +822,26 @@
                 
                 // Converter para formato dd/mm/yyyy (formato brasileiro)
                 data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
+            } else {
+                regexDataExtenso = /(\d{1,2})\s+(\([a-z]+\))?\s*(?:dias?\s+do\s+mês\s+de\s+)?([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)\s+(?:de\s+)?(\d{4})/i;
+                const dia = parseInt(matchDataExtenso[1]);
+                const mesNome = matchDataExtenso[3].toLowerCase();
+                const mes = meses[mesNome] || '01';
+                const ano = parseInt(matchDataExtenso[4]);
+
+                // Converter para formato dd/mm/yyyy (formato brasileiro)
+                data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
+                matchDataExtenso = texto.match(regexDataExtenso);
+                
+                if (matchDataExtenso) {
+                    const dia = parseInt(matchDataExtenso[1]);
+                    const mesNome = matchDataExtenso[2].toLowerCase();
+                    const mes = meses[mesNome] || '01';
+                    const ano = parseInt(matchDataExtenso[3]);
+                    
+                    // Converter para formato dd/mm/yyyy (formato brasileiro)
+                    data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
+                }
             }
             
             // Descrição - melhorada para capturar o conteúdo principal
@@ -899,7 +914,7 @@
                 if (fimDescricao === textoDescricao.length) {
                     const matchPonto = textoDescricao.match(/\.\s+[A-Z]/);
                     if (matchPonto && matchPonto.index < 500) {
-                        fimDescricao = matchPonto.index + 1;
+                        fimDescricao = matchPonto.index;
                     }
                 }
                 
@@ -926,13 +941,13 @@
                 numeroDoDocumento: numeroDoDocumento?.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null,
                 data: data,
                 letra: null,
-                descricao: descricao.toUpperCase() || null,
+                descricao: descricao.toUpperCase().substring(0, 200) || null,
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
-                tipoDocumento: 'PROJETO DE LEI'
+                tipoDocumento: tipoDocumento
             };
         }
 
-        function extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
+        function extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
             // Extrair número da portaria - MÚLTIPLOS PADRÕES para maior cobertura
             const regexPatterns = [
                 // Padrão 1: PORTARIA [MUNICIPAL] N° 123/2024 ou N° 123-A
@@ -1122,47 +1137,47 @@
                 letra: letraPortaria || null,
                 descricao: descricao.toUpperCase() || null,
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
-                tipoDocumento: 'PORTARIA'
+                tipoDocumento: tipoDocumento
             };
         }
 
-        function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos) {
+        function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
             // VERIFICAÇÃO PRIORITÁRIA POR NOME DE ARQUIVO
             // Se o nome do arquivo começa com "N" seguido de números ou contém "PORTARIA", é PORTARIA
             if (/^N\d+/i.test(nomeArquivo) || /PORTARIA/i.test(nomeArquivo)) {
-                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos);
+                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
             }
-            console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 200));
+            console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 500));
             
             // Verificar se é uma ATA
-            const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 100));
+            const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 500));
             
             if (isAta) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA`);
-                return extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos);
+                return extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
             }
             
             // Verificar se é um PROJETO DE LEI
-            const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 100));
+            const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 500));
             
             if (isProjetoLei) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROJETO DE LEI`);
-                return extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos);
+                return extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
             }
 
             // Verificar se é PORTARIA pelo conteúdo
-            const temPalavraPortaria = /PORTARIA/i.test(texto.substring(0, 200));
+            const temPalavraPortaria = /PORTARIA/i.test(texto.substring(0, 500));
             
             if (temPalavraPortaria) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo texto`);
-                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos);
+                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
             }
 
             // Verificar se é Lei
-            const isLei = /LEI\s+N["ºª°\s]+/i.test(texto.substring(0, 100));
+            const isLei = /LEI\s+([A-ZÁ]*\s+)?(?:MUNICIPAL\s+)?N[°ºª\s]+/i.test(texto.substring(0, 500));
             if (isLei) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI`);
-                return extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos);
+                return extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
             }
             
             console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO (padrão)`);
@@ -1337,6 +1352,7 @@
                 letra: letraDoDocumento || null,
                 descricao: descricao.toUpperCase() || null,
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
+                tipoDocumento: tipoDocumento
             };
         }
 
@@ -9338,7 +9354,7 @@
             const dropdownList = document.getElementById('select');
 
             items.forEach((item) => {
-                dropdownList.innerHTML = dropdownList.innerHTML + `<option id="${item.nome}" value="${item.id}">${item.id} - ${item.nome}</option>`;
+                dropdownList.innerHTML = dropdownList.innerHTML + `<option id="${item.id}" value="${item.id}">${item.id} - ${item.nome}</option>`;
             });
         }
 
