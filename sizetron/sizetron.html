@@ -352,6 +352,28 @@
             background: rgba(239,68,68,0.1); 
         }
         
+        .log-panel {
+            transition: all 0.3s ease;
+            max-height: 400px;
+            overflow: hidden;
+        }
+        
+        .log-panel.minimized {
+            max-height: 60px;
+        }
+        
+        .log-panel.minimized #logContainer {
+            display: none;
+        }
+        
+        .minimize-icon {
+            transition: transform 0.3s ease;
+        }
+        
+        .minimize-icon.rotated {
+            transform: rotate(180deg);
+        }
+        
         /* Loading Screen */
         #loadingScreen {
             position: fixed;
@@ -566,10 +588,15 @@
         </div>
 
         <!-- Log Panel -->
-        <div class="dash-panel rounded-2xl p-6 fade-in">
+        <div class="dash-panel rounded-2xl p-6 fade-in log-panel" id="logPanel">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-bold">📋 Log de Atividades</h3>
-                <button class="btn btn-xs btn-ghost" id="clearLogBtn">Limpar</button>
+                <div class="flex gap-2">
+                    <button class="btn btn-xs btn-ghost" id="minimizeLogBtn" title="Minimizar/Expandir">
+                        <span class="minimize-icon">▲</span>
+                    </button>
+                    <button class="btn btn-xs btn-ghost" id="clearLogBtn">Limpar</button>
+                </div>
             </div>
             <div class="max-h-64 overflow-y-auto" id="logContainer">
                 <div class="log-entry info">
@@ -623,6 +650,8 @@
             progressText: document.getElementById('progressText'),
             progressStatus: document.getElementById('progressStatus'),
             logContainer: document.getElementById('logContainer'),
+            logPanel: document.getElementById('logPanel'),
+            minimizeLogBtn: document.getElementById('minimizeLogBtn'),
             clearLogBtn: document.getElementById('clearLogBtn'),
             statFilename: document.getElementById('stat-filename'),
             statOriginal: document.getElementById('stat-original'),
@@ -654,9 +683,26 @@
                 error: '❌'
             };
             
-            logEntry.textContent = `${icons[type]} [${timestamp}] ${message}`;
+            const logMessage = `${icons[type]} [${timestamp}] ${message}`;
+            logEntry.textContent = logMessage;
             elements.logContainer.appendChild(logEntry);
             elements.logContainer.scrollTop = elements.logContainer.scrollHeight;
+            
+            // Enviar para console do navegador
+            const consoleMessage = `[SIZETRON] [${timestamp}] ${message}`;
+            switch(type) {
+                case 'error':
+                    console.error(consoleMessage);
+                    break;
+                case 'warning':
+                    console.warn(consoleMessage);
+                    break;
+                case 'success':
+                    console.log('%c' + consoleMessage, 'color: #10b981; font-weight: bold');
+                    break;
+                default:
+                    console.log(consoleMessage);
+            }
         }
 
         function updateProgress(percent, status = '') {
@@ -903,6 +949,15 @@
         // Clear log
         elements.clearLogBtn.addEventListener('click', () => {
             elements.logContainer.innerHTML = '<div class="log-entry info">ℹ️ Log limpo.</div>';
+            console.clear();
+            console.log('[SIZETRON] Log limpo.');
+        });
+        
+        // Minimize/Expand log
+        elements.minimizeLogBtn.addEventListener('click', () => {
+            elements.logPanel.classList.toggle('minimized');
+            const icon = elements.minimizeLogBtn.querySelector('.minimize-icon');
+            icon.classList.toggle('rotated');
         });
 
         // ============================================
