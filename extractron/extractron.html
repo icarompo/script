@@ -808,15 +808,33 @@
         }
 
         function extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
-            // Extrair número de lei - formato: "N" 002/2024" ou "Nº 002/2024"
-            const regexNumeroProjeto = /L\s*E\s*[A-Z\|]+\s+([A-ZÁ]*\s+)?(?:MUNICIPAL\s+)?(?:N\s*[\.]*\s*[°ºª"\s]*\s+)?(\d+\s*[0-9]*(?:[\.\/\-]\d+)*)/i;
-            const matchNumero = texto.substring(0, 200).match(regexNumeroProjeto);
-            
+            // Tentar múltiplos padrões de extração do número da lei
             let numeroDoDocumento = null;
-            if (matchNumero) {
-                console.log(matchNumero);
-                numeroDoDocumento = matchNumero[2];
-                numeroDoDocumento = numeroDoDocumento?.includes(' ') ? numeroDoDocumento?.replace(' ', '') : numeroDoDocumento;
+            
+            // PRIORIDADE 1: Extrair do nome do arquivo (mais confiável)
+            const regexNomeArquivo = /Lei\s+n[°ºª\s]*(\d+)/i;
+            const matchNomeArquivo = nomeArquivo.match(regexNomeArquivo);
+            if (matchNomeArquivo) {
+                numeroDoDocumento = matchNomeArquivo[1];
+                console.log(`[LEI] Número extraído do nome do arquivo: ${numeroDoDocumento}`);
+            }
+            
+            // PRIORIDADE 2: Se não achou no nome, procurar no texto
+            if (!numeroDoDocumento) {
+                const padroes = [
+                    /LEI\s+(?:MUNICIPAL\s+)?N[°ºª\s.]+(\d+)/i,
+                    /L\s*E\s*I\s+N[°ºª\s.]+(\d+)/i,
+                    /LEI\s+(?:Nº|N°|NO)\s*(\d+)/i
+                ];
+                
+                for (const regex of padroes) {
+                    const match = texto.substring(0, 300).match(regex);
+                    if (match) {
+                        numeroDoDocumento = match[1];
+                        console.log(`[LEI] Número extraído do texto: ${numeroDoDocumento}`);
+                        break;
+                    }
+                }
             }
             
             // Mapa de meses em português
@@ -826,58 +844,74 @@
                 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
             };
             
-            // Extrair data no formato "19 DE FEVEREIRO DE 2024"
-            let regexDataExtenso = /(\d{1,2})(?:\s+DE\s+|\s+)([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)(?:\s+DE\s+|\s+)(\d{4})/i;
-
-            let matchDataExtenso = texto.match(regexDataExtenso);
-            
+            // Extrair data - MÚLTIPLOS FORMATOS
             let data = null;
             
-            if (matchDataExtenso) {
-                const dia = parseInt(matchDataExtenso[1]);
-                const mesNome = matchDataExtenso[2].toLowerCase();
+            // Formato 1: Do nome do arquivo (ex: "22 de Agosto de 2025")
+            const regexDataNomeArquivo = /(\d{1,2})\s+de\s+([A-Za-zç]+)\s+de\s+(\d{4})/i;
+            const matchDataNome = nomeArquivo.match(regexDataNomeArquivo);
+            if (matchDataNome) {
+                const dia = parseInt(matchDataNome[1]);
+                const mesNome = matchDataNome[2].toLowerCase();
                 const mes = meses[mesNome] || '01';
-                const ano = parseInt(matchDataExtenso[3]);
-                
-                // Converter para formato dd/mm/yyyy (formato brasileiro)
+                const ano = parseInt(matchDataNome[3]);
                 data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
-            } else {
-                regexDataExtenso = /(\d{1,2})\s+(\([a-z]+\))?\s*(?:dias?\s+do\s+mês\s+de\s+)?([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)\s+(?:de\s+)?(\d{4})/i;
-                const dia = parseInt(matchDataExtenso[1]);
-                const mesNome = matchDataExtenso[3].toLowerCase();
-                const mes = meses[mesNome] || '01';
-                const ano = parseInt(matchDataExtenso[4]);
-
-                // Converter para formato dd/mm/yyyy (formato brasileiro)
-                data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
-                matchDataExtenso = texto.match(regexDataExtenso);
+                console.log(`[LEI] Data extraída do nome: ${data}`);
+            }
+            
+            // Formato 2: Do texto (se não achou no nome)
+            if (!data) {
+                const padroesDatas = [
+                    /(\d{1,2})\s+(?:DE\s+)?([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)\s+(?:DE\s+)?(\d{4})/i,
+                    /(\d{1,2})\s+dias?\s+do\s+mês\s+de\s+([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)\s+de\s+(\d{4})/i,
+                    /(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{4})/
+                ];
                 
-                if (matchDataExtenso) {
-                    const dia = parseInt(matchDataExtenso[1]);
-                    const mesNome = matchDataExtenso[2].toLowerCase();
-                    const mes = meses[mesNome] || '01';
-                    const ano = parseInt(matchDataExtenso[3]);
-                    
-                    // Converter para formato dd/mm/yyyy (formato brasileiro)
-                    data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
+                for (const regex of padroesDatas) {
+                    const match = texto.match(regex);
+                    if (match) {
+                        const dia = parseInt(match[1]);
+                        const mesNome = match[2];
+                        
+                        // Se for número (formato dd/mm/yyyy)
+                        if (/^\d+$/.test(mesNome)) {
+                            const mes = parseInt(mesNome);
+                            const ano = parseInt(match[3]);
+                            // Validar data
+                            if (dia >= 1 && dia <= 31 && mes >= 1 && mes <= 12) {
+                                data = `${dia.toString().padStart(2, '0')}/${mes.toString().padStart(2, '0')}/${ano}`;
+                                console.log(`[LEI] Data extraída do texto (numérica): ${data}`);
+                                break;
+                            }
+                        } else {
+                            // É nome de mês
+                            const mes = meses[mesNome.toLowerCase()] || '01';
+                            const ano = parseInt(match[3]);
+                            // Validar dia
+                            if (dia >= 1 && dia <= 31) {
+                                data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
+                                console.log(`[LEI] Data extraída do texto (extenso): ${data}`);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             
             // Descrição - melhorada para capturar o conteúdo principal
             let descricao = '';
             
-            // Procurar palavras-chave comuns em decretos
+            // Procurar palavras-chave comuns em leis
             const palavrasChave = [
                 'dispõe sobre',
                 'dispõe',
                 'altera',
                 'revoga',
-                'autorizada',
+                'autoriza',
                 'estabelece',
                 'institui',
                 'regulamenta',
                 'aprova',
-                'autoriza',
                 'nomeia',
                 'exonera',
                 'designa',
@@ -888,8 +922,8 @@
                 'dispensa',
                 'declara',
                 'determina',
-                'ementa',
-                'concede'
+                'concede',
+                'ementa'
             ];
             
             let inicioDescricao = -1;
@@ -910,12 +944,14 @@
                 // Limpar espaços extras e quebras de linha
                 textoDescricao = textoDescricao.replace(/\s+/g, ' ').trim();
                 
-                // Procurar o fim da descrição (antes de "e dá outras providências" ou artigo 1)
+                // Procurar o fim da descrição
                 const marcadoresFim = [
                     ', e dá outras providências',
                     ' e dá outras providências',
                     'e dá outras providências',
-                    ', e outras providências'
+                    ', e outras providências',
+                    'art. 1',
+                    'artigo 1'
                 ];
                 
                 let fimDescricao = textoDescricao.length;
@@ -929,38 +965,45 @@
                     }
                 }
                 
-                // Se não encontrou nenhum marcador, pegar até o primeiro ponto seguido de maiúscula
-                if (fimDescricao === textoDescricao.length) {
-                    const matchPonto = textoDescricao.match(/(?:\.\s+[A-Z])?(\d{4}\-\d{4})?/);
-                    if (matchPonto && matchPonto.index < 500) {
-                        fimDescricao = matchPonto.index;
+                // Se não encontrou marcador, limitar a 300 caracteres
+                if (fimDescricao === textoDescricao.length && textoDescricao.length > 300) {
+                    const matchPonto = textoDescricao.substring(0, 300).match(/\.\s+[A-Z]/);
+                    if (matchPonto) {
+                        fimDescricao = matchPonto.index + 1;
+                    } else {
+                        fimDescricao = 300;
                     }
                 }
                 
-                descricao = textoDescricao.substring(0, fimDescricao).trim() + marcadorUsado;
+                descricao = textoDescricao.substring(0, fimDescricao).trim();
+                if (marcadorUsado) {
+                    descricao += marcadorUsado;
+                }
+                
+                // Limpar caracteres OCR problemáticos
+                descricao = descricao
+                    .replace(/[:\\|_\*]+/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
                 
                 // Garantir que termina com pontuação
                 if (descricao && !/[.!?,;]$/.test(descricao)) {
-                    const ultimoPonto = Math.max(
-                        descricao.lastIndexOf('.'),
-                        descricao.lastIndexOf(','),
-                        descricao.lastIndexOf(';')
-                    );
-                    if (ultimoPonto > 50) {
-                        descricao = descricao.substring(0, ultimoPonto + 1);
-                    } else {
-                        descricao += '.';
-                    }
+                    descricao += '.';
                 }
             }
+            
+            console.log(`[LEI] Arquivo: ${nomeArquivo}`);
+            console.log(`[LEI] Número: ${numeroDoDocumento}`);
+            console.log(`[LEI] Data: ${data}`);
+            console.log(`[LEI] Descrição: ${descricao ? descricao.substring(0, 50) + '...' : 'VAZIA'}`);
             
             return {
                 numero: numeroDocumento,
                 arquivo: nomeArquivo,
-                numeroDoDocumento: numeroDoDocumento?.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null,
+                numeroDoDocumento: numeroDoDocumento,
                 data: data,
                 letra: null,
-                descricao: descricao.toUpperCase().substring(0, 200) || null,
+                descricao: descricao ? descricao.toUpperCase().substring(0, 300) : null,
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: tipoDocumento
             };
@@ -1335,57 +1378,88 @@
         }
 
         function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
-            // VERIFICAÇÃO PRIORITÁRIA POR NOME DE ARQUIVO
-            // Se o nome do arquivo começa com "N" seguido de números ou contém "PORTARIA", é PORTARIA
+            console.log(`[DEBUG] Processando arquivo: ${nomeArquivo}`);
+            console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 500));
+            
+            // PRIORIDADE 1: Verificar pelo NOME DO ARQUIVO (mais confiável)
+            if (/^Lei\s+n[°ºª\s]/i.test(nomeArquivo)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI pelo nome do arquivo`);
+                const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+            
+            // PRIORIDADE 2: Verificar se é PORTARIA pelo nome
             if (/^N\d+/i.test(nomeArquivo) || /PORTARIA/i.test(nomeArquivo)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo nome do arquivo`);
                 const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
-            console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 500));
+            
+            // PRIORIDADE 3: Verificar se é DECRETO pelo nome
+            if (/^Decreto/i.test(nomeArquivo)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO pelo nome do arquivo`);
+                const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+            
+            // PRIORIDADE 4: Verificar se é ATA pelo nome
+            if (/^Ata/i.test(nomeArquivo)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA pelo nome do arquivo`);
+                const res = extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+            
+            // FALLBACK: Verificar pelo CONTEÚDO do texto
             
             // Verificar se é uma ATA
             const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 500));
-            
             if (isAta) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA`);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA pelo conteúdo`);
                 const res = extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
             // Verificar se é um PROJETO DE LEI
             const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 500));
-            
             if (isProjetoLei) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROJETO DE LEI`);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROJETO DE LEI pelo conteúdo`);
                 const res = extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
 
             // Verificar se é PORTARIA pelo conteúdo
             const temPalavraPortaria = /PORTARIA/i.test(texto.substring(0, 500));
-            
             if (temPalavraPortaria) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo texto`);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo conteúdo`);
                 const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
 
-            // Verificar se é Lei
-            const isLei = /L\s*E\s*.+\s+([A-ZÁ]*\s+)?(?:MUNICIPAL\s+)?N[°ºª"\s]+/i.test(texto.substring(0, 500));
+            // Verificar se é Lei pelo conteúdo (regex mais flexível)
+            const isLei = /L\s*E\s*I|LEI/i.test(texto.substring(0, 500));
             if (isLei) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI`);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI pelo conteúdo`);
                 const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
-            const isDecreto = /DECRETO(?:\s+N[ºª°]?)?\s*(\d+(?:[\.\/\-]\d+)*)(?:\-?([A-Z]))?\b/i.test(texto.substring(0, 500));
+            // Verificar se é DECRETO pelo conteúdo
+            const isDecreto = /DECRETO/i.test(texto.substring(0, 500));
             if (isDecreto) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO (padrão)`);
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO pelo conteúdo`);
                 const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
 
-            return { erro: "Documento não possui regex" };
+            console.error(`[ERRO] ${nomeArquivo} -> Nenhum padrão detectado!`);
+            console.error(`[ERRO] Primeiros 500 caracteres:`, texto.substring(0, 500));
+            return { 
+                erro: "Documento não possui regex",
+                arquivo: nomeArquivo,
+                numeroDoDocumento: null,
+                data: null,
+                descricao: null
+            };
         }
 
         // Normaliza/extrai número e letra de várias fontes (campo existente, texto ou nome de arquivo)
