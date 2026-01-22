@@ -7,7 +7,814 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="extractron.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+    <script id="tiposDeDocumentos" src="tiposDeDocumentos.js"></script>
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.4s ease;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+
+        body {
+            background: radial-gradient(circle at 20% 20%, rgba(99,102,241,0.06), transparent 25%),
+                        radial-gradient(circle at 80% 0%, rgba(16,185,129,0.08), transparent 25%),
+                        #0b1021;
+            color: #e5e7eb;
+        }
+
+        .dash-panel {
+            background: linear-gradient(135deg, rgba(24,26,31,0.96), rgba(17,20,26,0.94));
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+        }
+
+        .stat-tile {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 12px;
+            display: grid;
+            gap: 6px;
+        }
+
+        .stat-label { font-size: 11px; letter-spacing: .4px; text-transform: uppercase; opacity: .7; }
+        .stat-value { font-weight: 800; font-size: 18px; color: #a5f3fc; }
+
+        .card {
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-base-200">
+    <!-- Banner fixo para status de processamento -->
+    <div id="processingBanner" class="hidden fixed top-0 inset-x-0 z-50">
+        <div class="max-w-4xl mx-auto px-4 pt-3">
+            <div class="alert bg-base-100 shadow-2xl border border-base-300">
+                <span class="loading loading-spinner loading-md"></span>
+                <div>
+                    <h3 class="font-bold text-sm">Processando arquivos...</h3>
+                    <p id="processingText" class="text-xs opacity-80">Preparando...</p>
+                    <progress id="processingProgress" class="progress progress-primary w-full mt-2" value="0" max="100"></progress>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8">
+        <div class="dash-panel rounded-2xl p-5 mb-4">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.25em] text-slate-400">Extractron</p>
+                    <h2 class="text-2xl font-bold text-white">Painel de Processamento</h2>
+                    <p id="dashStatus" class="text-sm text-slate-400">Aguardando seleção de arquivos...</p>
+                </div>
+                <div class="flex gap-2 text-xs">
+                    <span class="badge badge-outline">PDF.js</span>
+                    <span class="badge badge-outline">Tesseract OCR</span>
+                    <span class="badge badge-outline">Lote &amp; Progresso</span>
+                </div>
+            </div>
+            <div class="mt-4">
+                <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div id="dashProgressFill" class="h-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-indigo-400" style="width:0%"></div>
+                </div>
+                <div class="flex justify-between text-xs text-slate-400 mt-1">
+                    <span id="dashPercent">0%</span>
+                    <span id="dashCounts">0 / 0</span>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                <div class="stat-tile">
+                    <span class="stat-label">Total</span>
+                    <span id="statTotal" class="stat-value">0</span>
+                </div>
+                <div class="stat-tile">
+                    <span class="stat-label">Processados</span>
+                    <span id="statDone" class="stat-value">0</span>
+                </div>
+                <div class="stat-tile">
+                    <span class="stat-label">Pendentes</span>
+                    <span id="statPending" class="stat-value">0</span>
+                </div>
+                <div class="stat-tile">
+                    <span class="stat-label">Erros</span>
+                    <span id="statErrors" class="stat-value text-rose-300">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow-2xl fade-in">
+            <div class="card-body">
+                <h1 class="card-title text-3xl md:text-4xl font-bold mb-6 justify-center gap-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Leitor de Documentos PDF
+                </h1>
+                
+                <!-- Configurar Campos Obrigatórios -->
+                <div class="card bg-base-200 mb-4">
+                    <div class="card-body">
+                        <h3 class="card-title text-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            Configurar Campos Obrigatórios
+                        </h3>
+                        <p class="text-sm opacity-70 mb-3">Marque os campos que devem estar presentes nos documentos:</p>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
+                                <input type="checkbox" id="obrigatorio_numero" class="checkbox checkbox-primary" />
+                                <span class="label-text">Número do Documento</span>
+                            </label>
+                            
+                            <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
+                                <input checked type="checkbox" id="obrigatorio_data" class="checkbox checkbox-primary" />
+                                <span class="label-text">Data</span>
+                            </label>
+                            
+                            <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
+                                <input checked type="checkbox" id="obrigatorio_descricao" class="checkbox checkbox-primary" />
+                                <span class="label-text">Descrição</span>
+                            </label>
+                            
+                            <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
+                                <input checked type="checkbox" id="obrigatorio_arquivo" class="checkbox checkbox-primary" />
+                                <span class="label-text">Arquivo</span>
+                            </label>
+
+                            <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
+                                <input checked type="checkbox" id="obrigatorio_letra" class="checkbox checkbox-primary" />
+                                <span class="label-text">Letra</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- ID de Documentação -->
+                <div class="form-control mb-4">
+                    <label class="label" for="numeroDoDocumento">
+                        <span class="label-text font-semibold flex items-center gap-2">
+                            <span class="badge badge-error badge-sm"></span>
+                            ID de Documentação (Obrigatório)
+                        </span>
+                    </label>
+                    <select id="select" class="select select-primary">
+                    </select>
+                </div>
+                
+                <!-- URL Base -->
+                <div class="form-control mb-6">
+                    <label class="label" for="urlDocumentos">
+                        <span class="label-text font-semibold flex items-center gap-2">
+                            <span class="badge badge-error badge-sm"></span>
+                            URL Base dos Documentos (Obrigatório)
+                        </span>
+                    </label>
+                    <input type="text" id="urlDocumentos" placeholder="Ex: https://seu-servidor.com/documentos/" 
+                           class="input input-bordered w-full" required />
+                    <label class="label">
+                        <span class="label-text-alt opacity-70">Este campo é obrigatório. Use com barra no final (ex: .../documentos/).</span>
+                    </label>
+                </div>
+                
+                <div class="divider"></div>
+                
+                <p class="text-center text-sm opacity-70 mb-4">Selecione os arquivos PDF para extrair as informações</p>
+                <input type="file" id="pdfInput" accept=".pdf" multiple />
+                <button class="btn btn-primary btn-lg w-full gap-2" onclick="document.getElementById('pdfInput').click()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    Selecionar PDFs
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="results" class="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8"></div>
+
+    <script>
+        // Configurar o PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        document.getElementById('pdfInput').addEventListener('change', async function(e) {
+            const files = Array.from(e.target.files);
+            const totalFiles = files.length;
+            let processedCount = 0;
+            let errorCount = 0;
+            const numeroDocumento = document.getElementById('select').value;
+            const urlDocumentos = document.getElementById('urlDocumentos').value.trim();
+
+            // Determinar o tipo do documento a partir da lista carregada
+            let tipoDocumento = null;
+            try {
+                if (window.tiposDeDocumentos && Array.isArray(window.tiposDeDocumentos)) {
+                    const found = window.tiposDeDocumentos.find(t => String(t.id) === String(numeroDocumento));
+                    if (found) tipoDocumento = found.nome;
+                }
+                // fallback: usar texto do option (formato "id - nome")
+                if (!tipoDocumento) {
+                    const option = document.getElementById('select').selectedOptions?.[0];
+                    if (option && option.textContent) {
+                        const parts = option.textContent.split(' - ');
+                        tipoDocumento = parts.length > 1 ? parts.slice(1).join(' - ').trim() : option.textContent.trim();
+                    }
+                }
+            } catch (e) {
+                console.error('Erro determinando tipoDocumento:', e);
+            }
+            
+            // Validar se o ID foi preenchido
+            if (!numeroDocumento) {
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = `
+                    <div class="card bg-base-100 shadow-xl fade-in">
+                        <div class="card-body">
+                            <div class="alert alert-error">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <div>
+                                    <h3 class="font-bold">Erro: ID de Documentação Obrigatório</h3>
+                                    <div class="text-xs">É obrigatório preencher o ID de Documentação antes de selecionar os arquivos. Este ID identifica o tipo de documento.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                // Limpar seleção de arquivo
+                document.getElementById('pdfInput').value = '';
+                return;
+            }
+            
+            // Validar se a URL foi preenchida
+            if (!urlDocumentos) {
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = `
+                    <div class="card bg-base-100 shadow-xl fade-in">
+                        <div class="card-body">
+                            <div class="alert alert-error">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <div>
+                                    <h3 class="font-bold">Erro: URL Base Obrigatória</h3>
+                                    <div class="text-xs">É obrigatório preencher a URL Base dos Documentos antes de selecionar os arquivos. Exemplo: https://seu-servidor.com/documentos/</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                // Limpar seleção de arquivo
+                document.getElementById('pdfInput').value = '';
+                return;
+            }
+            
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `
+                <div class="card bg-base-100 shadow-xl fade-in">
+                    <div class="card-body">
+                        <div class="flex items-center justify-center gap-3">
+                            <span class="loading loading-spinner loading-lg"></span>
+                            <p class="text-lg">Processando arquivos em paralelo...</p>
+                        </div>
+                        <div id="progressContainer" class="mt-4" style="display:none;">
+                            <div id="progressText" class="text-sm opacity-70 mb-2"></div>
+                            <progress id="progressFill" class="progress progress-primary w-full" value="0" max="100"></progress>
+                        </div>
+                    </div>
+                </div>
+            `;
+            // Exibir banner global de processamento
+            updateProgress(0, totalFiles, 'Iniciando...');
+
+            
+            // Obter campos obrigatórios
+            const camposObrigatorios = {
+                numero: document.getElementById('obrigatorio_numero').checked,
+                data: document.getElementById('obrigatorio_data').checked,
+                descricao: document.getElementById('obrigatorio_descricao').checked,
+                arquivo: document.getElementById('obrigatorio_arquivo').checked,
+                letra: document.getElementById('obrigatorio_letra').checked
+            };
+            
+            // Processar todos os arquivos em paralelo
+            const decretos = await Promise.all(
+                files.map(async (file) => {
+                    try {
+                        const decreto = await processarPDF(file, numeroDocumento, urlDocumentos, tipoDocumento);
+                        processedCount++;
+                        updateProgress(processedCount, totalFiles, `Processados: ${processedCount}/${totalFiles}` , errorCount);
+                        return decreto;
+                    } catch (error) {
+                        console.error(`Erro ao processar ${file.name}:`, error);
+                        processedCount++;
+                        errorCount++;
+                        updateProgress(processedCount, totalFiles, `Processados: ${processedCount}/${totalFiles}` , errorCount);
+                        return {
+                            arquivo: file.name,
+                            numeroDoDocumento: 'Erro no processamento',
+                            data: 'Erro',
+                            descricao: error.message,
+                            erro: true
+                        };
+                    }
+                })
+            );
+            
+            // Filtrar valores nulos
+            const decretosValidos = decretos.filter(d => d !== null);
+            
+            // Validar conforme campos obrigatórios
+            const { documentosValidos, documentosFalhos } = validarDocumentos(decretosValidos, camposObrigatorios);
+
+            errorCount = documentosFalhos.length;
+            updateProgress(totalFiles, totalFiles, `Finalizado: ${documentosValidos.length} ok, ${documentosFalhos.length} falhas`, errorCount);
+            
+            exibirResultados(documentosValidos, documentosFalhos);
+            
+            // Download automático dos arquivos
+            downloadArquivos(documentosValidos, documentosFalhos);
+            hideProgress();
+            
+            console.log('ID de Documentação:', numeroDocumento);
+            console.log('Documentos válidos:', documentosValidos);
+            console.log('Documentos com falhas:', documentosFalhos);
+        });
+
+        function updateProgress(current, total, message, errors = 0) {
+            const progressContainer = document.getElementById('progressContainer');
+            const progressText = document.getElementById('progressText');
+            const progressFill = document.getElementById('progressFill');
+
+            const banner = document.getElementById('processingBanner');
+            const bannerText = document.getElementById('processingText');
+            const bannerFill = document.getElementById('processingProgress');
+
+            const dashStatus = document.getElementById('dashStatus');
+            const dashPercent = document.getElementById('dashPercent');
+            const dashCounts = document.getElementById('dashCounts');
+            const dashFill = document.getElementById('dashProgressFill');
+            const statTotal = document.getElementById('statTotal');
+            const statDone = document.getElementById('statDone');
+            const statPending = document.getElementById('statPending');
+            const statErrors = document.getElementById('statErrors');
+
+            const percentage = Math.round((current / total) * 100);
+
+            // Banner global no topo
+            if (banner) banner.classList.remove('hidden');
+            if (bannerText) bannerText.textContent = message;
+            if (bannerFill) bannerFill.value = percentage;
+            
+            // Cartão local na página
+            if (progressContainer) progressContainer.style.display = 'block';
+            if (progressFill) progressFill.value = percentage;
+            if (progressText) progressText.textContent = `${message} - ${percentage}%`;
+
+            // Painel estilo Baixatron
+            if (dashStatus) dashStatus.textContent = message;
+            if (dashPercent) dashPercent.textContent = `${percentage}%`;
+            if (dashCounts) dashCounts.textContent = `${current} / ${total}`;
+            if (dashFill) dashFill.style.width = `${percentage}%`;
+            if (statTotal) statTotal.textContent = total;
+            if (statDone) statDone.textContent = current;
+            if (statPending) statPending.textContent = Math.max(0, total - current);
+            if (statErrors) statErrors.textContent = errors;
+        }
+
+        function hideProgress() {
+            const banner = document.getElementById('processingBanner');
+            if (banner) banner.classList.add('hidden');
+            const dashStatus = document.getElementById('dashStatus');
+            if (dashStatus) dashStatus.textContent = 'Concluído';
+        }
+
+        function validarDocumentos(documentos, camposObrigatorios) {
+            const documentosValidos = [];
+            const documentosFalhos = [];
+            
+            documentos.forEach(doc => {
+                let temErro = false;
+                const erros = [];
+                
+                // Verificar se tem erro no processamento
+                if (doc.erro) {
+                    temErro = true;
+                    erros.push('Erro no processamento do arquivo');
+                }
+                
+                // Validar campos obrigatórios
+                if (camposObrigatorios.numero && (!doc.numeroDoDocumento || doc.numeroDoDocumento === 'Erro no processamento')) {
+                    temErro = true;
+                    erros.push('Número do documento ausente ou inválido');
+                }
+                
+                if (camposObrigatorios.data && (!doc.data || doc.data === 'Erro')) {
+                    temErro = true;
+                    erros.push('Data ausente ou inválida');
+                }
+                
+                if (camposObrigatorios.descricao && (!doc.descricao || doc.descricao.trim() === '')) {
+                    temErro = true;
+                    erros.push('Descrição ausente ou vazia');
+                }
+                
+                if (camposObrigatorios.arquivo && (!doc.arquivo || doc.arquivo.trim() === '')) {
+                    temErro = true;
+                    erros.push('Arquivo não informado');
+                }
+                
+                if (temErro) {
+                    documentosFalhos.push({
+                        ...doc,
+                        motivos_falha: erros
+                    });
+                } else {
+                    documentosValidos.push(doc);
+                }
+            });
+            
+            return { documentosValidos, documentosFalhos };
+        }
+        
+        function downloadArquivos(documentosValidos, documentosFalhos) {
+            let mensagem = '💾 Os arquivos JSON foram baixados automaticamente:\n\n';
+            
+            // Download do arquivo com documentos válidos
+            if (documentosValidos.length > 0) {
+                const fileValidos = new Blob([JSON.stringify(documentosValidos, null, 2)], { type: 'application/json' });
+                const aValidos = document.createElement('a');
+                aValidos.href = URL.createObjectURL(fileValidos);
+                aValidos.download = 'informações_extraidos.json';
+                aValidos.click();
+                mensagem += '✅ informações_extraidos.json (documentos válidos)\n';
+            }
+            
+            // Download do arquivo com documentos com falhas (se houver)
+            if (documentosFalhos.length > 0) {
+                const fileFalhos = new Blob([JSON.stringify(documentosFalhos, null, 2)], { type: 'application/json' });
+                const aFalhos = document.createElement('a');
+                aFalhos.href = URL.createObjectURL(fileFalhos);
+                aFalhos.download = 'falha.json';
+                
+                // Aguardar um pouco para não fazer download simultâneo
+                setTimeout(() => {
+                    aFalhos.click();
+                }, 300);
+                mensagem += '❌ falha.json (documentos com falhas)\n';
+            }
+            
+            // Mostrar pop-up de confirmação
+            alert(mensagem);
+        }
+
+        async function processarPDF(file, numeroDocumento, urlDocumentos, tipoDocumento) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            
+            let textoCompleto = '';
+            let usouOCR = false;
+            
+            // Ler todas as páginas
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                
+                // Se a página tem pouco ou nenhum texto, usar OCR
+                if (pageText.trim().length < 50) {
+                    console.log(`Página ${i} de ${file.name} sem texto - usando OCR...`);
+                    const ocrText = await extrairTextoComOCR(page);
+                    textoCompleto += ocrText + ' ';
+                } else {
+                    textoCompleto += pageText + ' ';
+                }
+            }
+            
+            // Extrair informações usando regex
+            const decreto = extrairInformacoes(textoCompleto, file.name, numeroDocumento, urlDocumentos, tipoDocumento);
+            return decreto;
+        }
+
+        async function extrairTextoComOCR(page) {
+            try {
+                // Renderizar a página como imagem
+                const viewport = page.getViewport({ scale: 2.0 });
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                await page.render({
+                    canvasContext: context,
+                    viewport: viewport
+                }).promise;
+
+                // Converter canvas para imagem e aplicar OCR
+                const imageData = canvas.toDataURL('image/png');
+                
+                const result = await Tesseract.recognize(
+                    imageData,
+                    'por', // Português
+                );
+
+                return result.data.text;
+            } catch (error) {
+                console.error('Erro no OCR:', error);
+                return '';
+            }
+        }
+
+        function extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            // Extrair número da sessão - formatos: "Iº", "IIº", "1º", "2ª", etc.
+            const regexNumeroAta = /ATA\s+DA?\s+([IVXivx]+|[\d]+)[ºª°]/i;
+            const matchNumero = texto.match(regexNumeroAta);
+            
+            let numeroDoDocumento = null;
+            if (matchNumero) {
+                const numeroTexto = matchNumero[1];
+                // Converter romano para número se necessário
+                numeroDoDocumento = converterRomanoParaNumero(numeroTexto);
+            }
+            
+            // Extrair data no formato "30.01.2025" ou "dd/mm/yyyy" ou "dd.mm.yyyy"
+            const regexDataSimples = /(?:REALIZADA\s+EM\s+)?(\d{1,2})[\.\/](\d{1,2})[\.\/](\d{4})/i;
+            const matchDataSimples = texto.match(regexDataSimples);
+            
+            let data = null;
+            
+            if (matchDataSimples) {
+                const dia = parseInt(matchDataSimples[1]);
+                const mes = parseInt(matchDataSimples[2]);
+                const ano = parseInt(matchDataSimples[3]);
+                
+                // Converter para formato dd/mm/yyyy (formato brasileiro)
+                data = `${dia.toString().padStart(2, '0')}/${mes.toString().padStart(2, '0')}/${ano}`;
+            }
+            
+            // Extrair descrição até o primeiro ponto
+            let descricao = '';
+            const regexDescricao = /ATA\s+DA?\s+[^\.]+?\.([^\.]+?)\./i;
+            const matchDescricao = texto.match(regexDescricao);
+            
+            if (matchDescricao) {
+                descricao = matchDescricao[0].trim();
+            } else {
+                // Se não encontrou, pegar até o primeiro ponto depois de ATA
+                const inicioAta = texto.search(/ATA\s+DA?\s+/i);
+                if (inicioAta !== -1) {
+                    const textoAposAta = texto.substring(inicioAta);
+                    const primeiroPonto = textoAposAta.indexOf('.');
+                    if (primeiroPonto !== -1) {
+                        descricao = textoAposAta.substring(0, primeiroPonto + 1).trim();
+                    }
+                }
+            }
+            
+            return {
+                numero: numeroDocumento,
+                arquivo: nomeArquivo,
+                numeroDoDocumento: numeroDoDocumento,
+                data: data,
+                letra: null,
+                descricao: descricao.toUpperCase() || null,
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
+                tipoDocumento: tipoDocumento
+            };
+        }
+        
+        function converterRomanoParaNumero(romano) {
+            // Se já for um número, retorna
+            if (/^\d+$/.test(romano)) {
+                return romano;
+            }
+            
+            const romanos = {
+                'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5,
+                'VI': 6, 'VII': 7, 'VIII': 8, 'IX': 9, 'X': 10,
+                'XI': 11, 'XII': 12, 'XIII': 13, 'XIV': 14, 'XV': 15,
+                'XVI': 16, 'XVII': 17, 'XVIII': 18, 'XIX': 19, 'XX': 20
+            };
+            
+            return romanos[romano.toUpperCase()] || romano;
+        }
+        
+        function converterDataParaExtenso(dia, mes, ano) {
+            const unidades = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
+            const dezenas = ['', 'dez', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
+            const especiais = ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
+            
+            const mesesExtenso = [
+                'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+                'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'
+            ];
+            
+            const milhares = ['', 'mil', 'dois mil', 'três mil', 'quatro mil', 'cinco mil'];
+            
+            // Converter dia para extenso
+            let diaExtenso = '';
+            if (dia >= 10 && dia <= 19) {
+                diaExtenso = especiais[dia - 10];
+            } else {
+                const dezena = Math.floor(dia / 10);
+                const unidade = dia % 10;
+                if (dezena > 0 && unidade > 0) {
+                    diaExtenso = dezenas[dezena] + ' e ' + unidades[unidade];
+                } else if (dezena > 0) {
+                    diaExtenso = dezenas[dezena];
+                } else {
+                    diaExtenso = unidades[unidade];
+                }
+            }
+            
+            // Converter ano para extenso
+            const milhar = Math.floor(ano / 1000);
+            const centena = Math.floor((ano % 1000) / 100);
+            const dezenasAno = Math.floor((ano % 100) / 10);
+            const unidadeAno = ano % 10;
+            
+            let anoExtenso = '';
+            if (milhar === 2 && centena === 0) {
+                anoExtenso = 'dois mil';
+                if (dezenasAno >= 1 && dezenasAno <= 1 && unidadeAno >= 0) {
+                    if (dezenasAno === 1 && unidadeAno > 0) {
+                        anoExtenso += ' e ' + especiais[unidadeAno];
+                    } else if (dezenasAno === 1 && unidadeAno === 0) {
+                        anoExtenso += ' e dez';
+                    } else if (dezenasAno > 1) {
+                        anoExtenso += ' e ' + dezenas[dezenasAno];
+                        if (unidadeAno > 0) {
+                            anoExtenso += ' e ' + unidades[unidadeAno];
+                        }
+                    }
+                } else if (dezenasAno >= 2) {
+                    anoExtenso += ' e ' + dezenas[dezenasAno];
+                    if (unidadeAno > 0) {
+                        anoExtenso += ' e ' + unidades[unidadeAno];
+                    }
+                } else if (unidadeAno > 0) {
+                    anoExtenso += ' e ' + unidades[unidadeAno];
+                }
+            }
+            
+            return `Aos ${diaExtenso} dias do mês de ${mesesExtenso[mes - 1]} de ${anoExtenso}`;
+        }
+
+        function extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            // Extrair número do projeto de lei - formato: "N" 002/2024" ou "Nº 002/2024"
+            const regexNumeroProjeto = /PROJETO\s+DE\s+LEI\s+N["ºª°\s]+(\d+(?:[\.\/\-]\d+)*)/i;
+            const matchNumero = texto.match(regexNumeroProjeto);
+            
+            let numeroDoDocumento = null;
+            if (matchNumero) {
+                numeroDoDocumento = matchNumero[1];
+            }
+            
+            // Mapa de meses em português
+            const meses = {
+                'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
+                'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+                'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+            };
+            
+            // Extrair data no formato "19 DE FEVEREIRO DE 2024"
+            const regexDataExtenso = /(\d{1,2})\s+DE\s+([A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+)\s+DE\s+(\d{4})/i;
+            const matchDataExtenso = texto.match(regexDataExtenso);
+            
+            let data = null;
+            
+            if (matchDataExtenso) {
+                const dia = parseInt(matchDataExtenso[1]);
+                const mesNome = matchDataExtenso[2].toLowerCase();
+                const mes = meses[mesNome] || '01';
+                const ano = parseInt(matchDataExtenso[3]);
+                
+                // Converter para formato dd/mm/yyyy (formato brasileiro)
+                data = `${dia.toString().padStart(2, '0')}/${mes}/${ano}`;
+            }
+            
+            // Descrição - melhorada para capturar o conteúdo principal
+            let descricao = '';
+            
+            // Procurar palavras-chave comuns em decretos
+            const palavrasChave = [
+                'dispõe sobre',
+                'dispõe',
+                'altera',
+                'revoga',
+                'autorizada',
+                'estabelece',
+                'institui',
+                'regulamenta',
+                'aprova',
+                'autoriza',
+                'nomeia',
+                'exonera',
+                'designa',
+                'fixa',
+                'cria',
+                'extingue',
+                'torna',
+                'dispensa',
+                'declara',
+                'determina',
+                'ementa',
+                'concede'
+            ];
+            
+            let inicioDescricao = -1;
+            let palavraEncontrada = '';
+            
+            for (const palavra of palavrasChave) {
+                const index = texto.toLowerCase().indexOf(palavra.toLowerCase());
+                if (index !== -1 && (inicioDescricao === -1 || index < inicioDescricao)) {
+                    inicioDescricao = index;
+                    palavraEncontrada = palavra;
+                }
+            }
+            
+            if (inicioDescricao !== -1) {
+                // Extrair do início da descrição
+                let textoDescricao = texto.substring(inicioDescricao);
+                
+                // Limpar espaços extras e quebras de linha
+                textoDescricao = textoDescricao.replace(/\s+/g, ' ').trim();
+                
+                // Procurar o fim da descrição (antes de "e dá outras providências" ou artigo 1)
+                const marcadoresFim = [
+                    ', e dá outras providências',
+                    ' e dá outras providências',
+                    'e dá outras providências',
+                    ', e outras providências'
+                ];
+                
+                let fimDescricao = textoDescricao.length;
+                let marcadorUsado = '';
+                
+                for (const marcador of marcadoresFim) {
+                    const index = textoDescricao.toLowerCase().indexOf(marcador.toLowerCase());
+                    if (index !== -1 && index < fimDescricao) {
+                        fimDescricao = index;
+                        marcadorUsado = marcador;
+                    }
+                }
+                
+                // Se não encontrou nenhum marcador, pegar até o primeiro ponto seguido de maiúscula
+                if (fimDescricao === textoDescricao.length) {
+                    const matchPonto = textoDescricao.match(/\.\s+[A-Z]/);
+                    if (matchPonto && matchPonto.index < 500) {
+                        fimDescricao = matchPonto.index + 1;
+                    }
+                }
+                
+                descricao = textoDescricao.substring(0, fimDescricao).trim() + marcadorUsado;
+                
+                // Garantir que termina com pontuação
+                if (descricao && !/[.!?,;]$/.test(descricao)) {
+                    const ultimoPonto = Math.max(
+                        descricao.lastIndexOf('.'),
+                        descricao.lastIndexOf(','),
+                        descricao.lastIndexOf(';')
+                    );
+                    if (ultimoPonto > 50) {
+                        descricao = descricao.substring(0, ultimoPonto + 1);
+                    } else {
+                        descricao += '.';
+                    }
+                }
+            }
+            
+            return {
+                numero: numeroDocumento,
+                arquivo: nomeArquivo,
+                numeroDoDocumento: numeroDoDocumento?.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null ,
+                data: data,
+                letra: null,
+                descricao: descricao.toUpperCase() || null,
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
+                tipoDocumento: tipoDocumento
+            };
+        }
+
+        function extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            // Extrair número de lei - formato: "N" 002/2024" ou "Nº 002/2024"
+            const regexNumeroProjeto = /L\s*E\s*[A-Z\|]+\s+([A-ZÁ]*\s+)?(?:MUNICIPAL\s+)?(?:N\s*[\.]*\s*[°ºª"\s]*\s+)?(\d+\s*[0-9]*(?:[\.\/\-]\d+)*)/i;
+            const matchNumero = texto.substring(0, 200).match(regexNumeroProjeto);
+            
+            let numeroDoDocumento = null;
+            if (matchNumero) {
+                console.log(matchNumero);
                 numeroDoDocumento = matchNumero[2];
                 numeroDoDocumento = numeroDoDocumento?.includes(' ') ? numeroDoDocumento?.replace(' ', '') : numeroDoDocumento;
             }
@@ -353,50 +1160,9 @@
             };
         }
 
-        function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
-            // VERIFICAÇÃO PRIORITÁRIA POR NOME DE ARQUIVO
-            // Se o nome do arquivo começa com "N" seguido de números ou contém "PORTARIA", é PORTARIA
-            if (/^N\d+/i.test(nomeArquivo) || /PORTARIA/i.test(nomeArquivo)) {
-                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
-            }
-            console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 500));
-            
-            // Verificar se é uma ATA
-            const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 500));
-            
-            if (isAta) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA`);
-                return extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
-            }
-            
-            // Verificar se é um PROJETO DE LEI
-            const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 500));
-            
-            if (isProjetoLei) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROJETO DE LEI`);
-                return extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
-            }
+        function extrairInformacoesDecreto (texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
 
-            // Verificar se é PORTARIA pelo conteúdo
-            const temPalavraPortaria = /PORTARIA/i.test(texto.substring(0, 500));
             
-            if (temPalavraPortaria) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo texto`);
-                return extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
-            }
-
-            // Verificar se é Lei
-            const isLei = /L\s*E\s*.+\s+([A-ZÁ]*\s+)?(?:MUNICIPAL\s+)?N[°ºª\s]+/i.test(texto.substring(0, 500));
-            if (isLei) {
-                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI`);
-                return extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
-            }
-            
-            console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO (padrão)`);
-            
-            // Padrões para extrair informações de DECRETO
-            
-            // Número do decreto - diversos formatos possíveis
             const regexNumero = [
                 /DECRETO(?:\s+N[ºª°]?)?\s*(\d+(?:[\.\/\-]\d+)*)(?:\-?([A-Z]))?\b/i
             ];
@@ -556,7 +1322,7 @@
                 }
             }
             
-            return {
+            const resultado = {
                 numero: numeroDocumento,
                 arquivo: nomeArquivo,
                 numeroDoDocumento: numeroDoDocumento?.includes('/') ? numeroDoDocumento.split('/')[0] : numeroDoDocumento ? numeroDoDocumento : null,
@@ -566,6 +1332,103 @@
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: tipoDocumento
             };
+        }
+
+        function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            // VERIFICAÇÃO PRIORITÁRIA POR NOME DE ARQUIVO
+            // Se o nome do arquivo começa com "N" seguido de números ou contém "PORTARIA", é PORTARIA
+            if (/^N\d+/i.test(nomeArquivo) || /PORTARIA/i.test(nomeArquivo)) {
+                const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+            console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 500));
+            
+            // Verificar se é uma ATA
+            const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 500));
+            
+            if (isAta) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA`);
+                const res = extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+            
+            // Verificar se é um PROJETO DE LEI
+            const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 500));
+            
+            if (isProjetoLei) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROJETO DE LEI`);
+                const res = extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+
+            // Verificar se é PORTARIA pelo conteúdo
+            const temPalavraPortaria = /PORTARIA/i.test(texto.substring(0, 500));
+            
+            if (temPalavraPortaria) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo texto`);
+                const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+
+            // Verificar se é Lei
+            const isLei = /L\s*E\s*.+\s+([A-ZÁ]*\s+)?(?:MUNICIPAL\s+)?N[°ºª"\s]+/i.test(texto.substring(0, 500));
+            if (isLei) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI`);
+                const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+            
+            const isDecreto = /DECRETO(?:\s+N[ºª°]?)?\s*(\d+(?:[\.\/\-]\d+)*)(?:\-?([A-Z]))?\b/i.test(texto.substring(0, 500));
+            if (isDecreto) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO (padrão)`);
+                const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+
+            return { erro: "Documento não possui regex" };
+        }
+
+        // Normaliza/extrai número e letra de várias fontes (campo existente, texto ou nome de arquivo)
+        function pósProcessarNumero(resultado, texto, nomeArquivo) {
+            // Se já tem numeroDoDocumento, normalize e separe letra
+            const normalize = (raw) => {
+                if (!raw) return { numero: null, letra: null };
+                let s = String(raw).trim();
+                s = s.replace(/[ºª°]/g, '');
+                s = s.replace(/\s+/g, ' ');
+                // Encontrar letra ao final: "123-A" | "123 A" | "123A"
+                const m = s.match(/^(.+?)[\s\-–—]?([A-Za-z])$/);
+                if (m) return { numero: m[1].trim(), letra: m[2].toUpperCase() };
+                return { numero: s, letra: null };
+            };
+
+            let { numeroDoDocumento, letra } = resultado;
+            let raw = numeroDoDocumento;
+
+            if (!raw) {
+                // tentar extrair do texto com padrões comuns
+                const patterns = [
+                    /(?:N[º°ª\s]*|Número|No\.|Nº|N\s*)\s*(\d{1,4}(?:[\/\-]\d{2,4})?)(?:[\s\-–—]*([A-Za-z]))?/i,
+                    /\b(\d{1,4}\/\d{2,4})(?:[\s\-]*([A-Za-z]))?\b/,
+                    /\b(\d{1,4})(?:[\s\-]\d{2,4})?(?:[\s\-]*([A-Za-z]))?\b/
+                ];
+
+                for (const p of patterns) {
+                    const m = texto.match(p);
+                    if (m) { raw = m[1]; if (m[2]) letra = m[2].toUpperCase(); break; }
+                }
+            }
+
+            // fallback para nome do arquivo
+            if (!raw && nomeArquivo) {
+                const m = nomeArquivo.match(/(\d{1,4})(?:[\-_](\d{4}))?(?:[-_]?([A-Za-z]))?/);
+                if (m) { raw = m[1] + (m[2] ? '/' + m[2] : ''); if (m[3]) letra = m[3].toUpperCase(); }
+            }
+
+            const n = normalize(raw);
+            resultado.numeroDoDocumento = n.numero ? (String(n.numero).includes('/') ? String(n.numero) : String(n.numero)) : null;
+            resultado.letra = resultado.letra || letra || n.letra || null;
+            return resultado;
         }
 
         function exibirResultados(documentosValidos, documentosFalhos) {
