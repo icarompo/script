@@ -420,7 +420,11 @@
         await scaledSleep(2000);
         click('#tipo_documento > div');
         await scaledSleep(400);
+<<<<<<< HEAD
+        click('#tipo_documento_5');
+=======
         click(`li [aria-label="${data.tipoDocumento}"]`);
+>>>>>>> c91736ed955f394711449f5db7fef5b38c3dbc7a
         await scaledSleep(400);
 
         // 2. Número

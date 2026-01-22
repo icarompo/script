@@ -20,6 +20,10 @@ script/
 │   ├── formtron.js        
 │   └── README.md          # Documentação detalhada
 │
+├── sizetron/              # Compressor de PDFs
+│   ├── sizetron.html      
+│   └── README.md          # Documentação detalhada
+│
 └── README.md              
 ```
 
@@ -32,6 +36,7 @@ script/
 | **BAIXATRON** | Download automático em massa | Console / Userscript |
 | **EXTRACTRON** | Extrai dados de PDFs via OCR | HTML (drag-drop) |
 | **FORMTRON** | Preenche formulários automaticamente | Console / Userscript |
+| **SIZETRON** | Comprime PDFs para tamanho específico | HTML (drag-drop) |
 
 ---
 
@@ -64,6 +69,16 @@ script/
 
 👉 [Documentação](formtron/README.md)
 
+### 📦 **SIZETRON** - Compressor de PDFs
+- 3 níveis de compressão (Extrema, Recomendada, Baixa)
+- Define tamanho alvo personalizado
+- Interface visual moderna com drag-and-drop
+- Barra superior sticky com estatísticas em tempo real
+- Download automático do arquivo comprimido
+- Avisos quando não atinge tamanho alvo
+
+👉 [Documentação](sizetron/README.md)
+
 ---
 
 ## 📚 Documentação Completa
@@ -71,6 +86,7 @@ script/
 - **[BAIXATRON](baixatron/README.md)** - Download automático detalhado
 - **[EXTRACTRON](extractron/README.md)** - Extração de PDFs com OCR
 - **[FORMTRON](formtron/README.md)** - Automação de formulários
+- **[SIZETRON](sizetron/README.md)** - Compressão inteligente de PDFs
 
 ---
 
