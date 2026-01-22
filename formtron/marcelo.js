@@ -1,3 +1,13 @@
+// ==UserScript==
+// @name         Marcelo
+// @namespace    https://github.com/eduar
+// @version      0.1.0
+// @description  Preenche o formulário automaticamente usando dados do JSON
+// @match        *://*/*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
 (async function () {
   // Estado e opções (inspirado no painel do Baixatron)
   const state = {
@@ -74,6 +84,19 @@
     if (!el) return console.warn('Elemento não encontrado:', selector);
     el.focus();
     el.click();
+  };
+
+  // Procura e clica em um <li> de dropdown pelo aria-label ou texto
+  const selectByAriaLabel = (label) => {
+    if (!label) return false;
+    const items = Array.from(document.querySelectorAll('li[aria-label]'));
+    const target = items.find((el) => el.getAttribute('aria-label') === label || el.textContent.trim() === label);
+    if (!target) {
+      console.warn(`Opção não encontrada para aria-label: ${label}`);
+      return false;
+    }
+    target.click();
+    return true;
   };
 
   // =============================
@@ -263,6 +286,7 @@
           <button id="m-start" class="m-btn primary" disabled>▶ Iniciar</button>
           <button id="m-pause" class="m-btn" disabled>⏸ Pausar</button>
           <button id="m-stop" class="m-btn danger">⏹ Parar</button>
+          <button id="m-loadjson" class="m-btn" style="grid-column: span 3;">📂 Carregar JSON</button>
           <div class="row" style="grid-column: span 3;">
             <input id="m-startfrom" type="text" placeholder="Começar a partir do decreto (ex: 123)">
             <button id="m-apply" class="m-btn">Aplicar</button>
@@ -283,6 +307,7 @@
     const btnPause = document.getElementById('m-pause');
     const btnStop = document.getElementById('m-stop');
     const btnApply = document.getElementById('m-apply');
+    const btnLoadJson = document.getElementById('m-loadjson');
     const inputStart = document.getElementById('m-startfrom');
     const startInfo = document.getElementById('m-startinfo');
     const statusEl = document.getElementById('marcelo-status');
@@ -325,6 +350,9 @@
       // Atualizar timers periodicamente
       state.__tick = setInterval(updateStats, 500);
       await loop();
+    };
+    btnLoadJson.onclick = async () => {
+      await carregarJson();
     };
     btnApply.onclick = async () => {
       const numeroInicial = inputStart.value.trim();
@@ -420,11 +448,8 @@
         await scaledSleep(2000);
         click('#tipo_documento > div');
         await scaledSleep(400);
-<<<<<<< HEAD
-        click('#tipo_documento_5');
-=======
-        click(`li [aria-label="${data.tipoDocumento}"]`);
->>>>>>> c91736ed955f394711449f5db7fef5b38c3dbc7a
+        const tipoLabel = data.tipoDocumento || 'Lei';
+        selectByAriaLabel(tipoLabel);
         await scaledSleep(400);
 
         // 2. Número
@@ -547,6 +572,22 @@
     });
   };
 
+  const carregarJson = async () => {
+    arquivos = await pickJson();
+    if (!Array.isArray(arquivos)) arquivos = [];
+    arquivosFiltrados = arquivos;
+    state.total = arquivos.length;
+    state.currentIndex = 0;
+    state.processed = 0;
+    state.errors = 0;
+    const startInfo = document.getElementById('m-startinfo');
+    if (startInfo) startInfo.textContent = arquivos.length ? `Total: ${arquivos.length} decreto(s) no arquivo` : 'Nenhum dado carregado';
+    const btnStart = document.getElementById('m-start');
+    if (btnStart) btnStart.disabled = arquivos.length === 0;
+    setStatus(arquivos.length ? `Arquivo carregado: ${arquivos.length} decreto(s)` : 'Nenhum dado carregado');
+    updateStats();
+  };
+
   // Expor API mínima
   window.__marcelo = {
     pause: () => (state.paused = true),
@@ -563,19 +604,7 @@
 
   // Inicialização
   renderPanel();
-
-  // Escolher arquivo
-  arquivos = await pickJson();
-  if (!Array.isArray(arquivos)) arquivos = [];
-  arquivosFiltrados = arquivos;
-  state.total = arquivos.length;
-  state.currentIndex = 0;
-  state.processed = 0;
-  state.errors = 0;
-  setStatus(arquivos.length ? `Arquivo carregado: ${arquivos.length} decreto(s)` : 'Nenhum dado carregado');
-  const startInfo = document.getElementById('m-startinfo');
-  if (startInfo) startInfo.textContent = `Total: ${arquivos.length} decreto(s) no arquivo`;
-  const btnStart = document.getElementById('m-start');
-  if (btnStart) btnStart.disabled = arquivos.length === 0;
+  // Aguarda o usuário clicar em "Carregar JSON"
+  setStatus('Aguardando arquivo JSON…');
   updateStats();
 })();
