@@ -1,8 +1,8 @@
-// ==UserScript==
+  // ==UserScript==
   // @name         BAIXATRON HACKER - Auto Downloader Cyberpunk
   // @namespace    https://github.com/HelloKiw1
-  // @version      3.0
-  // @description  👾 SISTEMA DE INVASÃO DE DOWNLOADS ATIVADO 💻 - Painel hacker para download automático
+  // @version      3.2
+  // @description  👾 SISTEMA DE INVASAO DE DOWNLOADS ATIVADO 💻 - Hacker edition com painel visual e automacoes avancadas
   // @author       HelloKiw1
   // @match        *://*/*
   // @grant        none
@@ -11,1100 +11,2601 @@
   // ==/UserScript==
 
   /**
- * BAIXATRON HACKER EDITION - AUTO-DOWNLOADER COM ESTÉTICA CYBERPUNK
- * 
- * > SISTEMA DE INVASÃO DE DOWNLOADS ATIVADO
- * > ACESSO PERMITIDO: ELITE HACKER MODE
- * 
- * Produzido por HelloKiw1
- * GitHub: https://github.com/HelloKiw1
- * 
- * Funciona tanto via PAINEL UI quanto via CONSOLE
- * 
- * COMO USAR:
- * 1. Abra o console (F12 > Console)
- * 2. Cole este script e pressione Enter
- * 3. Use os comandos via console OU o painel visual
- * 
- * COMANDOS CONSOLE:
- * __dl.scan()           - Escanear downloads na página
- * __dl.start()          - Iniciar download automático
- * __dl.stop()           - Parar o processo
- * __dl.reset()          - Resetar tudo
- * __dl.selectAll()      - Selecionar todos os itens
- * __dl.deselectAll()    - Deselecionar todos
- * __dl.setOptions({...})- Configurar opções
- */
+  * BAIXATRON HACKER - AUTO-DOWNLOADER CYBERPUNK v3.2
+   * 
+  * 👾 SISTEMA DE INVASAO DE DOWNLOADS ATIVADO 💻
+   * 
+   * Produzido por HelloKiw1
+   * GitHub: https://github.com/HelloKiw1
+   * 
+   * Script com interface visual completa:
+   * - Painel de controle flutuante
+   * - Lista de downloads com checkboxes
+   * - Barra de progresso
+   * - Estatísticas em tempo real
+   * - Controles de velocidade
+   * 
+   * COMO USAR:
+   * - O painel aparece automaticamente ao carregar a página
+   * - Clique em [⊙] Escanear para encontrar downloads
+   * - Selecione os arquivos desejados
+   * - Clique em [▶] Iniciar para começar
+   * 
+   * SEMPRE COMEÇA COM dryRun: true (MODO SEGURO)
+   */
 
-(() => {
-  if (window.__dl?.stop) window.__dl.stop();
+  (() => {
+    if (window.__dl?.stop) window.__dl.stop();
 
-  // ============================================
-  // CONFIGURAÇÕES INICIAIS
-  // ============================================
-  const opts = {
-    dryRun: true,
-    delayMs: 800,
-    waitForDownload: true,
-    waitForDownloadTimeout: 3000,
-    concurrency: 1,
-    maxRetries: 1,
-    rootSelector: null,
-    autoDetectIframe: true,
-    maxClicks: Infinity,
-    dedupe: true,
-    verbose: true
-  };
-
-  // ============================================
-  // UTILITÁRIOS & LOGGER HACKER
-  // ============================================
-  const log = (msg, type = 'info') => {
-    const colors = {
-      info: 'color: #00ff41; font-family: Courier New',
-      success: 'color: #00ff00; font-family: Courier New; font-weight: bold',
-      error: 'color: #ff0055; font-family: Courier New; font-weight: bold',
-      warning: 'color: #ffff00; font-family: Courier New',
-      hack: 'color: #00ffff; font-family: Courier New; font-style: italic'
+    // ============================================
+    // CONFIGURAÇÕES INICIAIS
+    // ============================================
+    const opts = {
+      dryRun: true,
+      delayMs: 800,
+      waitForDownload: true,
+      waitForDownloadTimeout: 3000,
+      concurrency: 1,
+      maxRetries: 1,
+      tableExpandWaitMs: 900,
+      tableExpandMaxClicks: 12,
+      tableSweepMaxPages: 25,
+      rootSelector: null,
+      autoDetectIframe: true,
+      maxClicks: Infinity,
+      dedupe: true,
+      verbose: true // ativar logs para debug
     };
-    console.log(`%c[BAIXATRON] ${msg}`, colors[type] || colors.info);
-  };
 
-  const exts = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|odt|ods|txt|csv|rtf)$/i;
-  const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  const toAbs = href => { 
-    try { 
-      return new URL(href, document.baseURI).href; 
-    } catch { 
-      return ''; 
-    } 
-  };
-  
-  const hash = s => { 
-    let h = 0; 
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; 
-    return (h >>> 0).toString(36); 
-  };
+    // ============================================
+    // UTILITÁRIOS
+    // ============================================
+    const exts = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|odt|ods|txt|csv|rtf)$/i;
+    const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const normLoose = s => {
+      const base = norm(s || '');
+      try {
+        return base.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      } catch {
+        return base;
+      }
+    };
 
-  const isVisible = el => {
-    const s = getComputedStyle(el);
-    if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
-    try {
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0 && (s.display === 'none' || s.visibility === 'hidden')) return false;
-    } catch {}
-    return true;
-  };
+    const parseNameFilterTerms = raw => (raw || '')
+      .split(/[\n,;|]+/)
+      .map(term => term.trim())
+      .filter(Boolean);
 
-  const looksLikeDownload = el => {
-    const text = norm(el.innerText);
-    const cls = norm(el.className);
-    const hrefAttr = el.getAttribute('href') || el.dataset.href || el.dataset.url || el.dataset.file || '';
-    const hrefAbs = toAbs(hrefAttr);
-    const onclick = el.getAttribute('onclick') || '';
+    const parseFilterCriteria = raw => {
+      const terms = parseNameFilterTerms(raw);
+      const ids = new Set();
+      const idRanges = [];
+      const textTokens = [];
 
-    const uiKeywords = /fechar|aplicar|cancelar|limpar|remover|ir para|visualizar|adicionar|campo|página|paginação/i;
-    if (uiKeywords.test(text)) return false;
+      for (const term of terms) {
+        const cleaned = term.trim();
+        if (!cleaned) continue;
 
-    return (
-      el.hasAttribute('download') ||
-      /download|baixar|baixe|\.pdf/i.test(text) ||
-      /scgridfieldoddlink|scgridfieldoddlink|css_arquivo_documento/i.test(cls) ||
-      exts.test(hrefAttr) || exts.test(hrefAbs) ||
-      /nm_mostra_doc/i.test(hrefAttr) ||
-      /wpdm-download|download-file/i.test(hrefAttr) ||
-      /wpdm-download-button/i.test(cls)
-    );
-  };
+        const loose = normLoose(cleaned);
+        const rangeMatch = loose.match(/^(?:de\s*)?(?:id\s*[:#-]?\s*)?(\d{1,10})\s*(?:-|ate|a|to|\.\.)\s*(?:id\s*[:#-]?\s*)?(\d{1,10})$/i);
+        if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
+          const a = parseInt(rangeMatch[1], 10);
+          const b = parseInt(rangeMatch[2], 10);
+          if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
+            idRanges.push([Math.min(a, b), Math.max(a, b)]);
+            continue;
+          }
+        }
 
-  const getContainer = el =>
-    el.closest('article, li, .elementor-post, .elementor-widget, .wpdm-link-template, .card, .list-group-item, .entry, .item, .row, tr, [id]') || 
-    el.parentElement || 
-    el;
+        const idMatch = cleaned.match(/^id\s*[:#-]?\s*(\d{1,10})$/i) || cleaned.match(/^(\d{1,10})$/);
+        if (idMatch && idMatch[1]) {
+          const numeric = parseInt(idMatch[1], 10);
+          if (Number.isFinite(numeric) && numeric > 0) {
+            ids.add(numeric);
+            continue;
+          }
+        }
 
-  const keyOf = (el, idx) => {
-    const href = toAbs(el.getAttribute('href') || el.dataset.href || el.dataset.url || el.dataset.file || '');
+        textTokens.push(loose);
+      }
+
+      return {
+        terms,
+        ids,
+        idRanges,
+        textTokens: textTokens.filter(Boolean)
+      };
+    };
+
+    const toAbs = href => {
+      if (!href || typeof href !== 'string') return '';
+      const cleaned = href.trim();
+      if (!cleaned || cleaned === '#' || /^javascript:/i.test(cleaned)) return '';
+      try {
+        return new URL(cleaned, document.baseURI).href;
+      } catch {
+        return '';
+      }
+    };
     
-    if (el.dataset && el.dataset.package) return `pkg:${el.dataset.package}`;
-    if (el.dataset && el.dataset.id) return `id:${el.dataset.id}`;
-    
-    const cont = getContainer(el);
-    const contId = cont.getAttribute('id') || cont.getAttribute('data-id') || cont.getAttribute('data-package-id');
-    if (contId) return 'cont:' + contId;
-    
-    const btnText = norm(el.innerText || el.textContent || '').slice(0, 100);
-    const contText = norm(cont.innerText || '').slice(0, 200);
-    const combined = btnText + '|' + contText;
-    
-    if (href && href !== document.baseURI) return 'url:' + href + '|txt:' + hash(combined);
-    
-    return 'txt:' + hash(combined) + ':idx:' + idx;
-  };
+    const hash = s => { 
+      let h = 0; 
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; 
+      return (h >>> 0).toString(36); 
+    };
 
-  // ============================================
-  // SELETORES
-  // ============================================
-  const selectors = [
-    'a[download]',
-    'a[href*="/download"]',
-    'a[href*="nm_mostra_doc"]',
-    'a.scGridFieldOddLink, a.scGridFieldEvenLink',
-    'a.css_arquivo_documento_grid_line',
-    'a[href$=".pdf"], a[href$=".doc"], a[href$=".docx"], a[href$=".xls"], a[href$=".xlsx"], ' +
-    'a[href$=".ppt"], a[href$=".pptx"], a[href$=".zip"], a[href$=".rar"], a[href$=".7z"], ' +
-    'a[href$=".odt"], a[href$=".ods"], a[href$=".txt"], a[href$=".csv"], a[href$=".rtf"]',
-    'a.wpdm-download-button, a.wpdm-download-link',
-    '[data-download], [data-file]'
-  ].join(',');
+    const sanitizeFileName = (name, defaultExt = 'pdf') => {
+      const base = (name || '')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
 
-  // ============================================
-  // ESTADO GLOBAL
-  // ============================================
-  const state = {
-    queue: [],
-    processed: [],
-    running: false,
-    timer: null,
-    startedAt: null,
-    errors: [],
-    doneKeys: new Set(),
-    queuedKeys: new Set(),
-    selectedKeys: new Set(),
-    pageType: null
-  };
+      if (!base) return `download.${defaultExt}`;
 
-  const runningSet = new Set();
+      // Se ja tem extensao, respeita.
+      if (/\.[a-z0-9]{2,5}$/i.test(base)) return base;
+      return `${base}.${defaultExt}`;
+    };
 
-  const detectPageType = () => {
-    const url = window.location.href.toLowerCase();
-    const html = document.documentElement.outerHTML.toLowerCase();
-    
-    if (html.includes('nmsc_iframe') || html.includes('scriptcase') || html.includes('pesq_publicacoes_grid')) {
-      return 'iframe-grid';
-    }
-    if (html.includes('wpdm') || html.includes('download-monitor') || html.includes('elementor')) {
-      return 'direct-links';
-    }
-    return 'generic';
-  };
-
-  state.pageType = detectPageType();
-
-  // ============================================
-  // COLETA DE LINKS
-  // ============================================
-  const collect = () => {
-    let root = opts.rootSelector ? document.querySelector(opts.rootSelector) : document;
-
-    if (opts.autoDetectIframe && !opts.rootSelector) {
-      const iframeSelectors = [
-        '#nmsc_iframe_pesq_publicacoes_grid',
-        'iframe[name*="grid"]',
-        'iframe[name*="resultado"]',
-        'iframe[id*="resultado"]',
-        'iframe[src*="publicacoes"]',
-        'iframe[src*="documentos"]'
-      ];
-      
-      for (const selector of iframeSelectors) {
-        const foundIframe = document.querySelector(selector);
-        if (foundIframe && foundIframe.contentWindow && foundIframe.contentWindow.document) {
-          root = foundIframe.contentWindow.document;
-          break;
+    const fileNameFromContentDisposition = headerValue => {
+      if (!headerValue) return '';
+      const starMatch = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+      if (starMatch && starMatch[1]) {
+        try {
+          return decodeURIComponent(starMatch[1].trim().replace(/^"|"$/g, ''));
+        } catch {
+          return starMatch[1].trim().replace(/^"|"$/g, '');
         }
       }
-    }
+      const match = headerValue.match(/filename=([^;]+)/i);
+      return match ? match[1].trim().replace(/^"|"$/g, '') : '';
+    };
 
-    if (!root) return [];
+    const fileNameFromUrl = url => {
+      if (!url) return '';
 
-    const all = Array.from(root.querySelectorAll(selectors))
-      .filter(el => {
-        const tag = el.tagName;
-        const isBtn = tag === 'A' || tag === 'BUTTON' || el.getAttribute('role') === 'button';
-        const visible = isVisible(el);
-        const download = looksLikeDownload(el);
-        return isBtn && visible && download;
-      })
-      .map((el, idx) => {
-        const url = toAbs(el.getAttribute('href') || el.dataset.href || el.dataset.url || el.dataset.file || '');
-        const text = (el.innerText || '').trim().slice(0, 120);
-        const key = keyOf(el, idx);
-        return { el, url, text, key, idx };
+      try {
+        const parsed = new URL(url, document.baseURI);
+        const fromQuery =
+          parsed.searchParams.get('filename') ||
+          parsed.searchParams.get('file') ||
+          parsed.searchParams.get('name');
+
+        if (fromQuery) return decodeURIComponent(fromQuery.trim());
+
+        const segment = (parsed.pathname.split('/').pop() || '').trim();
+        if (!segment) return '';
+        return decodeURIComponent(segment);
+      } catch {
+        return '';
+      }
+    };
+
+    const blobLooksLikeHtml = async blob => {
+      if (!blob || blob.size === 0) return false;
+
+      try {
+        const head = (await blob.slice(0, 512).text()).trim().toLowerCase();
+        return (
+          head.startsWith('<!doctype html') ||
+          head.startsWith('<html') ||
+          head.includes('<head') ||
+          head.includes('<body')
+        );
+      } catch {
+        return false;
+      }
+    };
+
+    const isVisible = el => {
+      if (!el || !el.isConnected) return false;
+
+      try {
+        // Ignora elementos não renderizados (inclusive quando o pai está com display:none).
+        if (el.getClientRects().length === 0) return false;
+      } catch {
+        return false;
+      }
+
+      let cur = el;
+      while (cur && cur.nodeType === 1) {
+        const s = getComputedStyle(cur);
+        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+        cur = cur.parentElement;
+      }
+
+      return true;
+    };
+
+    const downloadIconSignatures = [
+      'M216 0h80c13.3 0 24 10.7 24 24v168',
+      'M387.66 192H332V48'
+    ];
+
+    const viewIconSignatures = [
+      'M572.52 241.4C518.29 135.59 410.93 64 288 64'
+    ];
+
+    const hasIconPath = (el, signatures) => {
+      const svgPaths = Array.from(el.querySelectorAll('svg path'));
+      return svgPaths.some(path => {
+        const d = path.getAttribute('d') || '';
+        return signatures.some(sig => d.includes(sig));
+      });
+    };
+
+    const hasDownloadIcon = el => {
+      const classText = norm(el.className || '');
+      if (/(fa-download|ri-download|icon-download|btn-download|download-btn|download-icon)/i.test(classText)) {
+        return true;
+      }
+
+      return hasIconPath(el, downloadIconSignatures);
+    };
+
+    const hasViewIcon = el => hasIconPath(el, viewIconSignatures);
+
+    const looksLikeDownload = el => {
+      const text = norm(
+        [
+          el.innerText,
+          el.textContent,
+          el.getAttribute('aria-label'),
+          el.getAttribute('title'),
+          el.dataset?.tooltip,
+          el.dataset?.title
+        ].filter(Boolean).join(' ')
+      );
+      const cls = norm(el.className);
+      const hrefAttr = el.getAttribute('href') || el.dataset.href || el.dataset.url || el.dataset.file || '';
+      const hrefAbs = toAbs(hrefAttr);
+      const onclick = el.getAttribute('onclick') || '';
+      const isButton = el.tagName === 'BUTTON' || el.getAttribute('role') === 'button';
+      const iconOnlyButton = isButton && !text;
+      const iconDownload = hasDownloadIcon(el);
+      const iconView = hasViewIcon(el);
+
+      const uiKeywords = /fechar|aplicar|cancelar|limpar|remover|ir para|visualizar|adicionar|campo|página|paginação/i;
+      if (uiKeywords.test(text)) return false;
+
+      if (iconView && !iconDownload) return false;
+
+      if (iconOnlyButton) {
+        return iconDownload;
+      }
+
+      return (
+        iconDownload ||
+        el.hasAttribute('download') ||
+        /download|baixar|baixe|arquivo|anexo|\.pdf/i.test(text) ||
+        /scgridfieldoddlink|scgridfieldevenlink|css_arquivo_documento|download|arquivo|anexo/i.test(cls) ||
+        exts.test(hrefAttr) || exts.test(hrefAbs) ||
+        /nm_mostra_doc|arquivo|anexo|download/i.test(hrefAttr) ||
+        /wpdm-download|download-file/i.test(hrefAttr) ||
+        /wpdm-download-button/i.test(cls) ||
+        /download|baixar|nm_mostra_doc/i.test(onclick)
+      );
+    };
+
+    const getContainer = el =>
+      el.closest('article, li, .elementor-post, .elementor-widget, .wpdm-link-template, .card, .list-group-item, .entry, .item, .row, tr, [id]') || 
+      el.parentElement || 
+      el;
+
+    const getRecordTitle = el => {
+      // Caso tabela desktop: pega titulo da primeira coluna da linha.
+      const row = el.closest('tr');
+      if (row) {
+        const firstCell = row.querySelector('td[title], th[title], td, th');
+        if (firstCell) {
+          const fromTitle = (firstCell.getAttribute('title') || '').trim();
+          if (fromTitle) return fromTitle;
+          const fromText = (firstCell.textContent || '').trim();
+          if (fromText) return fromText;
+        }
+      }
+
+      // Caso card mobile: tenta localizar campo "Titulo:".
+      const card = el.closest('div');
+      if (card) {
+        const spans = Array.from(card.querySelectorAll('span'));
+        const titleLabel = spans.find(s => /t[ií]tulo\s*:/i.test((s.textContent || '').trim()));
+        if (titleLabel && titleLabel.nextElementSibling) {
+          const titleValue = (titleLabel.nextElementSibling.textContent || '').trim();
+          if (titleValue) return titleValue;
+        }
+      }
+
+      return '';
+    };
+
+    const extractDownloadUrl = el => {
+      if (!el) return '';
+
+      const direct = [
+        el.getAttribute('href'),
+        el.dataset?.downloadurl,
+        el.dataset?.href,
+        el.dataset?.url,
+        el.dataset?.file,
+        el.getAttribute('data-downloadurl'),
+        el.getAttribute('data-href'),
+        el.getAttribute('data-url'),
+        el.getAttribute('data-file')
+      ];
+
+      for (const raw of direct) {
+        const abs = toAbs(raw || '');
+        if (abs) return abs;
+      }
+
+      const cont = getContainer(el);
+      if (!cont || !cont.querySelectorAll) return '';
+
+      const nearby = Array.from(cont.querySelectorAll('a[href], [data-href], [data-url], [data-file]'));
+      for (const node of nearby) {
+        const raw =
+          node.getAttribute('href') ||
+          node.dataset?.downloadurl ||
+          node.dataset?.href ||
+          node.dataset?.url ||
+          node.dataset?.file ||
+          node.getAttribute('data-downloadurl') ||
+          node.getAttribute('data-href') ||
+          node.getAttribute('data-url') ||
+          node.getAttribute('data-file') ||
+          '';
+
+        const abs = toAbs(raw);
+        if (!abs) continue;
+
+        const hint = norm([
+          raw,
+          node.className,
+          node.getAttribute('onclick'),
+          node.getAttribute('title'),
+          node.getAttribute('aria-label')
+        ].filter(Boolean).join(' '));
+
+        if (
+          exts.test(raw) || exts.test(abs) ||
+          /download|baixar|nm_mostra_doc|arquivo|anexo|wpdm-download/i.test(hint)
+        ) {
+          return abs;
+        }
+      }
+
+      return '';
+    };
+
+    const keyOf = (el, idx, fallbackText = '', resolvedUrl = '') => {
+      const href = resolvedUrl || extractDownloadUrl(el);
+      
+      if (el.dataset && el.dataset.package) return `pkg:${el.dataset.package}`;
+      if (el.dataset && el.dataset.id) return `id:${el.dataset.id}`;
+      if (el.getAttribute('data-id')) return `did:${el.getAttribute('data-id')}`;
+
+      const onclick = (el.getAttribute('onclick') || '').replace(/\s+/g, ' ').trim();
+      if (onclick && /download|baixar|nm_mostra_doc|arquivo|anexo/i.test(onclick)) {
+        return 'oc:' + hash(onclick.slice(0, 300));
+      }
+      
+      // Se tem URL válida e única, usar ela como chave principal
+      if (href && href !== document.baseURI && href.length > 10) {
+        return 'url:' + href;
+      }
+      
+      const cont = getContainer(el);
+      const contId = cont.getAttribute('id') || cont.getAttribute('data-id') || cont.getAttribute('data-package-id');
+      if (contId) return 'cont:' + contId;
+      
+      const btnText = norm(el.innerText || el.textContent || fallbackText || '').slice(0, 100);
+      const contText = norm(cont.innerText || '').slice(0, 200);
+      const combined = btnText + '|' + contText;
+      
+      return 'txt:' + hash(combined);
+    };
+
+    // ============================================
+    // SELETORES
+    // ============================================
+    const selectors = [
+      'a[download]',
+      'a[href*="/download"]',
+      'a[href*="nm_mostra_doc"]',
+      'a.scGridFieldOddLink, a.scGridFieldEvenLink',
+      'a.css_arquivo_documento_grid_line',
+      'a[href$=".pdf"], a[href$=".doc"], a[href$=".docx"], a[href$=".xls"], a[href$=".xlsx"], ' +
+      'a[href$=".ppt"], a[href$=".pptx"], a[href$=".zip"], a[href$=".rar"], a[href$=".7z"], ' +
+      'a[href$=".odt"], a[href$=".ods"], a[href$=".txt"], a[href$=".csv"], a[href$=".rtf"]',
+      'a.wpdm-download-button, a.wpdm-download-link',
+      'a.elementor-button, a.elementor-button-link',
+      'a.nt_btn',
+      '[data-download], [data-file]',
+      'button',
+      '[role="button"]'
+    ].join(',');
+
+    // ============================================
+    // ESTADO GLOBAL
+    // ============================================
+    const state = {
+      queue: [],
+      processed: [],
+      running: false,
+      expandingTable: false,
+      blockedFrames: [],
+      timer: null,
+      startedAt: null,
+      errors: [],
+      doneKeys: new Set(),
+      queuedKeys: new Set(),
+      selectedKeys: new Set(),
+      itemIdByKey: new Map(),
+      nextItemId: 1,
+      pageType: null
+    };
+
+    const runningSet = new Set();
+
+    const detectPageType = () => {
+      const url = window.location.href.toLowerCase();
+      const html = document.documentElement.outerHTML.toLowerCase();
+      
+      if (html.includes('nmsc_iframe') || 
+          html.includes('scriptcase') ||
+          html.includes('pesq_publicacoes_grid')) {
+        return 'iframe-grid';
+      }
+      
+      if (html.includes('wpdm') || 
+          html.includes('download-monitor') ||
+          html.includes('elementor')) {
+        return 'direct-links';
+      }
+      
+      return 'generic';
+    };
+
+    state.pageType = detectPageType();
+
+    // ============================================
+    // COLETA DE LINKS
+    // ============================================
+    const collectFromRoot = root => {
+      if (!root || !root.querySelectorAll) return [];
+
+      const pageHint = getCurrentPageNumber();
+
+      return Array.from(root.querySelectorAll(selectors))
+        .filter(el => {
+          const tag = el.tagName;
+          const isBtn = tag === 'A' || tag === 'BUTTON' || el.getAttribute('role') === 'button';
+          const visible = isVisible(el);
+          const download = looksLikeDownload(el);
+          return isBtn && visible && download;
+        })
+        .map((el, idx) => {
+          const url = extractDownloadUrl(el);
+          const titleName = getRecordTitle(el);
+          const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || titleName || '').trim().slice(0, 120);
+          const key = keyOf(el, idx, titleName, url);
+          return { el, url, text, titleName, key, idx, sourcePage: pageHint };
+        });
+    };
+
+    const collect = (logEnabled = true) => {
+      let roots = [];
+      const blockedFrames = [];
+
+      if (opts.rootSelector) {
+        const root = document.querySelector(opts.rootSelector);
+        if (root) roots.push(root);
+      } else {
+        roots.push(document);
+
+        if (opts.autoDetectIframe) {
+          const frames = Array.from(document.querySelectorAll('iframe'));
+          for (const frame of frames) {
+            try {
+              const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+              if (frameDoc) roots.push(frameDoc);
+            } catch {
+              const rawSrc = frame.getAttribute('src') || frame.src || '';
+              const normalized = toAbs(rawSrc) || rawSrc || '(iframe sem src)';
+              blockedFrames.push(normalized);
+            }
+          }
+        }
+      }
+
+      state.blockedFrames = Array.from(new Set(blockedFrames)).filter(Boolean);
+
+      if (!roots.length) return [];
+
+      const all = roots.flatMap(root => collectFromRoot(root));
+
+      const map = new Map();
+      for (const it of all) if (!map.has(it.key)) map.set(it.key, it);
+
+      if (opts.verbose && blockedFrames.length && logEnabled) {
+        console.warn('[BAIXATRON] ⚠️ Iframes com acesso bloqueado (cross-origin):', blockedFrames.length);
+        if (map.size === 0) {
+          console.warn('[BAIXATRON] 💡 Dica: abra o iframe em nova aba (domínio do conteúdo) para escanear os botões de download.');
+          console.warn('[BAIXATRON] 💡 Atalho: use __dl.openBlockedFrames() ou botão [↗] Abrir Iframe(s).');
+        }
+      }
+
+      if (logEnabled) {
+        console.log('[BAIXATRON] 🔍 Collect: elementos brutos:', all.length, '| únicos após dedupe:', map.size);
+      }
+      return Array.from(map.values());
+    };
+
+    const isControlDisabled = el => {
+      if (!el) return true;
+      if (el.disabled) return true;
+      const ariaDisabled = (el.getAttribute('aria-disabled') || '').toLowerCase();
+      if (ariaDisabled === 'true') return true;
+      const cls = norm(el.className || '');
+      return /\b(disabled|is-disabled|btn-disabled)\b/.test(cls);
+    };
+
+    const dispatchFormEvents = el => {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const parseNumberish = value => {
+      const raw = String(value || '').replace(/\./g, '');
+      const match = raw.match(/-?\d+/);
+      if (!match) return NaN;
+      return parseInt(match[0], 10);
+    };
+
+    const getControlContextText = el => {
+      const text = [
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.id,
+        el.name,
+        el.className,
+        el.closest('label')?.textContent,
+        el.parentElement?.textContent
+      ].filter(Boolean).join(' ');
+      return norm(text);
+    };
+
+    const getCleanOptionNumber = opt => {
+      if (!opt) return NaN;
+
+      const valueText = String(opt.value || '').trim();
+      const labelText = String(opt.textContent || '').trim();
+
+      if (/^\d{1,4}$/.test(valueText)) return parseInt(valueText, 10);
+      if (/^\d{1,4}$/.test(labelText)) return parseInt(labelText, 10);
+
+      return NaN;
+    };
+
+    const looksLikeRowsPerPageSelect = select => {
+      const options = Array.from(select.options || []);
+      if (options.length < 2) return false;
+
+      const contextText = getControlContextText(select);
+      const hasRowsContext = /por p[aá]gina|itens por|registros por|linhas por|results per page|rows per page|page size|per page|page length|tamanho da p[aá]gina/i.test(contextText);
+      if (hasRowsContext) {
+        return true;
+      }
+
+      const hasUuidLikeValue = options.some(opt => /^[a-f0-9]{8}-[a-f0-9]{4}-/i.test(String(opt.value || '').trim()));
+      if (hasUuidLikeValue) return false;
+
+      const numericOptions = options
+        .map(getCleanOptionNumber)
+        .filter(n => Number.isFinite(n) && n > 0);
+
+      if (numericOptions.length < 2) return false;
+
+      const min = Math.min(...numericOptions);
+      const max = Math.max(...numericOptions);
+      const hasLikelyPageSize = numericOptions.some(n => [10, 20, 25, 50, 100].includes(n));
+
+      // Evita confundir com seletor de página (1,2,3...) ou filtros diversos.
+      return min >= 5 && max <= 500 && (hasLikelyPageSize || (max >= 20 && max / min >= 2));
+    };
+
+    const pickBestRowsPerPageOption = select => {
+      const options = Array.from(select.options || []);
+      if (options.length === 0) return null;
+
+      const allOption = options.find(opt => {
+        const valueText = (opt.value || '').trim();
+        const labelText = opt.textContent || '';
+        return valueText === '-1' || /\b(all|todos?|todas?|tudo)\b/i.test(labelText);
+      });
+      if (allOption) return allOption;
+
+      let best = null;
+      let bestNumber = -Infinity;
+
+      for (const opt of options) {
+        const numberValue = getCleanOptionNumber(opt);
+        if (!Number.isFinite(numberValue)) continue;
+        if (numberValue > bestNumber) {
+          bestNumber = numberValue;
+          best = opt;
+        }
+      }
+
+      return best;
+    };
+
+    const expandRowsPerPage = async () => {
+      let changed = 0;
+
+      const selects = Array.from(document.querySelectorAll('select'))
+        .filter(select => !select.closest('#__dl-panel'))
+        .filter(select => isVisible(select) && !isControlDisabled(select))
+        .filter(select => looksLikeRowsPerPageSelect(select));
+
+      for (const select of selects) {
+        const targetOption = pickBestRowsPerPageOption(select);
+        if (!targetOption) continue;
+
+        const nextValue = targetOption.value;
+        const currentValue = select.value;
+        if (nextValue === currentValue && targetOption.selected) continue;
+
+        select.value = nextValue;
+        targetOption.selected = true;
+        dispatchFormEvents(select);
+        changed++;
+      }
+
+      if (changed > 0) {
+        await wait(Math.max(250, opts.tableExpandWaitMs));
+      }
+
+      return changed;
+    };
+
+    const getCollectSignature = () => collect(false).map(it => it.key).join('|');
+
+    const getPaginationContainers = () => {
+      const selectors = [
+        'nav',
+        'ul',
+        'ol',
+        '[class*="pagination" i]',
+        '[class*="pagin" i]',
+        '[class*="pager" i]',
+        '[aria-label*="pagin" i]',
+        '[aria-label*="page" i]'
+      ].join(',');
+
+      return Array.from(document.querySelectorAll(selectors))
+        .filter(el => !el.closest('#__dl-panel'))
+        .filter(el => isVisible(el));
+    };
+
+    const getPaginationControls = container => {
+      if (!container || !container.querySelectorAll) return [];
+
+      return Array.from(container.querySelectorAll('button, a, [role="button"]'))
+        .filter(el => isVisible(el) && !isControlDisabled(el))
+        .filter(el => !looksLikeDownload(el));
+    };
+
+    const getControlText = el => norm([
+      el.innerText,
+      el.textContent,
+      el.getAttribute('aria-label'),
+      el.getAttribute('title'),
+      el.getAttribute('rel')
+    ].filter(Boolean).join(' '));
+
+    const getClassText = el => {
+      if (!el) return '';
+      if (typeof el.className === 'string') return norm(el.className);
+      return norm(el.getAttribute('class') || '');
+    };
+
+    const getControlPageNumber = el => {
+      const directText = (el.innerText || el.textContent || '').trim();
+      if (/^\d{1,4}$/.test(directText)) {
+        return parseInt(directText, 10);
+      }
+
+      const attrText = [
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.getAttribute('data-page'),
+        el.getAttribute('data-pagenumber')
+      ].filter(Boolean).join(' ');
+
+      const match = attrText.match(/\b(\d{1,4})\b/);
+      return match ? parseInt(match[1], 10) : NaN;
+    };
+
+    const isCurrentPageControl = el => {
+      const ariaCurrent = (el.getAttribute('aria-current') || '').toLowerCase();
+      if (ariaCurrent === 'page' || ariaCurrent === 'true') return true;
+
+      const ownClass = getClassText(el);
+      if (/\b(active|current|selected|is-active|page-active)\b/.test(ownClass)) return true;
+
+      const parent = el.parentElement;
+      if (!parent) return false;
+
+      const parentAriaCurrent = (parent.getAttribute('aria-current') || '').toLowerCase();
+      if (parentAriaCurrent === 'page' || parentAriaCurrent === 'true') return true;
+
+      const parentClass = getClassText(parent);
+      return /\b(active|current|selected|is-active|page-active)\b/.test(parentClass);
+    };
+
+    const getControlMarker = el => {
+      const page = getControlPageNumber(el);
+      if (Number.isFinite(page)) return `page:${page}`;
+
+      const parent = el.parentElement;
+      const pos = parent ? Array.from(parent.children).indexOf(el) : -1;
+      const text = getControlText(el) || getClassText(el) || 'icon-control';
+      return `ctrl:${text.slice(0, 80)}:${pos}`;
+    };
+
+    const getPaginationStateMarker = () => {
+      const containers = getPaginationContainers();
+      const markers = [];
+
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        if (controls.length < 2) continue;
+
+        const active = controls.find(isCurrentPageControl);
+        if (active) {
+          markers.push(getControlMarker(active));
+        }
+      }
+
+      return markers.join('|');
+    };
+
+    const getCurrentPageNumber = () => {
+      const containers = getPaginationContainers();
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        if (controls.length < 2) continue;
+
+        const active = controls.find(isCurrentPageControl);
+        if (!active) continue;
+
+        const page = getControlPageNumber(active);
+        if (Number.isFinite(page)) return page;
+      }
+
+      return NaN;
+    };
+
+    const findPaginationControlByPage = pageNumber => {
+      if (!Number.isFinite(pageNumber)) return null;
+
+      const containers = getPaginationContainers();
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        const match = controls.find(control => getControlPageNumber(control) === pageNumber);
+        if (match) return match;
+      }
+
+      return null;
+    };
+
+    const goToPageNumber = async pageNumber => {
+      if (!Number.isFinite(pageNumber)) return false;
+
+      const currentPage = getCurrentPageNumber();
+      if (Number.isFinite(currentPage) && currentPage === pageNumber) return true;
+
+      const control = findPaginationControlByPage(pageNumber);
+      if (!control) return false;
+
+      const beforeSig = getCollectSignature();
+      const beforePageMarker = getPaginationStateMarker();
+
+      if (typeof control.click === 'function') {
+        control.click();
+      } else {
+        control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      }
+
+      const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforePageMarker);
+      if (changed) {
+        await waitForCollectSettled(opts.tableExpandWaitMs * 6);
+      }
+
+      const afterPage = getCurrentPageNumber();
+      return Number.isFinite(afterPage) && afterPage === pageNumber;
+    };
+
+    const waitForCollectChange = async (previousSignature, timeoutMs, previousPageMarker = '') => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        await wait(250);
+        const nextSignature = getCollectSignature();
+        if (nextSignature !== previousSignature) return true;
+
+        if (previousPageMarker) {
+          const nextPageMarker = getPaginationStateMarker();
+          if (nextPageMarker !== previousPageMarker) return true;
+        }
+      }
+      return false;
+    };
+
+    const waitForCollectSettled = async timeoutMs => {
+      const startedAt = Date.now();
+      let lastSignature = '';
+      let stableHits = 0;
+      let lastItems = [];
+
+      while (Date.now() - startedAt < timeoutMs) {
+        await wait(250);
+        const items = collect(false);
+        const signature = items.map(it => it.key).join('|');
+
+        if (signature === lastSignature) {
+          stableHits++;
+        } else {
+          stableHits = 0;
+          lastSignature = signature;
+        }
+
+        lastItems = items;
+
+        // Considera assentado quando houver itens e duas leituras seguidas iguais.
+        if (items.length > 0 && stableHits >= 1) {
+          return items;
+        }
+      }
+
+      return lastItems;
+    };
+
+    const clickLoadMoreControls = async () => {
+      const loadMoreRegex = /mostrar mais|carregar mais|ver mais|mais resultados|mais itens|exibir mais|load more|show more|see more/i;
+      let clicks = 0;
+
+      while (clicks < opts.tableExpandMaxClicks) {
+        const candidates = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+          .filter(el => !el.closest('#__dl-panel'))
+          .filter(el => isVisible(el) && !isControlDisabled(el))
+          .filter(el => !looksLikeDownload(el))
+          .filter(el => {
+            const text = norm([
+              el.innerText,
+              el.textContent,
+              el.getAttribute('aria-label'),
+              el.getAttribute('title')
+            ].filter(Boolean).join(' '));
+            return loadMoreRegex.test(text);
+          });
+
+        if (candidates.length === 0) break;
+
+        const target = candidates[0];
+        const beforeSig = getCollectSignature();
+
+        if (typeof target.click === 'function') {
+          target.click();
+        } else {
+          target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+
+        clicks++;
+        const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 4);
+        if (!changed) break;
+      }
+
+      return clicks;
+    };
+
+    const findNextPaginationControl = (clickedMarkers = new Set()) => {
+      const nextRegex = /(pr[oó]xim[ao]?|next|seguinte|avan[cç]ar|pr[oó]x\b|[»›→])/i;
+      const prevRegex = /(anterior|prev(?:ious)?|voltar|[«‹←])/i;
+      const nextClassRegex = /(next|chevron-right|angle-right|arrow-right|caret-right|icon-right|ri-arrow-right|fa-angle-right|fa-chevron-right|bi-chevron-right|pagination-next)/i;
+      const prevClassRegex = /(prev|previous|chevron-left|angle-left|arrow-left|caret-left|icon-left|ri-arrow-left|fa-angle-left|fa-chevron-left|bi-chevron-left|pagination-prev)/i;
+
+      const pickFromControls = controls => {
+        if (!controls || controls.length === 0) return null;
+
+        const activeIndex = controls.findIndex(isCurrentPageControl);
+        const currentPage = activeIndex >= 0 ? getControlPageNumber(controls[activeIndex]) : NaN;
+
+        const numericControls = controls
+          .map(el => ({ el, page: getControlPageNumber(el) }))
+          .filter(entry => Number.isFinite(entry.page));
+
+        const sortedNumeric = numericControls
+          .slice()
+          .sort((a, b) => a.page - b.page);
+
+        if (Number.isFinite(currentPage)) {
+          const nextNumeric = sortedNumeric
+            .filter(entry => entry.page > currentPage)
+            .map(entry => entry.el)
+            .find(el => !clickedMarkers.has(getControlMarker(el)));
+
+          if (nextNumeric) return nextNumeric;
+        } else if (sortedNumeric.length > 0) {
+          // Se não identificou página ativa, evita clicar na menor (geralmente página 1).
+          const guessNext = sortedNumeric
+            .filter(entry => entry.page > 1)
+            .map(entry => entry.el)
+            .find(el => !clickedMarkers.has(getControlMarker(el)));
+
+          if (guessNext) return guessNext;
+
+          if (sortedNumeric.length > 1) {
+            const second = sortedNumeric[1].el;
+            if (!clickedMarkers.has(getControlMarker(second))) return second;
+          }
+        }
+
+        if (activeIndex >= 0) {
+          for (let i = activeIndex + 1; i < controls.length; i++) {
+            const candidate = controls[i];
+            if (isCurrentPageControl(candidate)) continue;
+
+            const text = getControlText(candidate);
+            const classText = getClassText(candidate);
+            if (prevRegex.test(text) || prevClassRegex.test(classText)) continue;
+            if (clickedMarkers.has(getControlMarker(candidate))) continue;
+
+            return candidate;
+          }
+        }
+
+        const nextByLabel = controls.find(candidate => {
+          const text = getControlText(candidate);
+          const classText = getClassText(candidate);
+          const rel = (candidate.getAttribute('rel') || '').toLowerCase();
+
+          if (prevRegex.test(text) || prevClassRegex.test(classText)) return false;
+
+          const looksLikeNext = nextRegex.test(text) || nextClassRegex.test(classText) || rel === 'next';
+          if (!looksLikeNext) return false;
+
+          return !clickedMarkers.has(getControlMarker(candidate));
+        });
+
+        if (nextByLabel) return nextByLabel;
+
+        const anyNumeric = numericControls
+          .map(entry => entry.el)
+          .find(el => !isCurrentPageControl(el) && !clickedMarkers.has(getControlMarker(el)));
+
+        return anyNumeric || null;
+      };
+
+      const containers = getPaginationContainers();
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        if (controls.length < 2) continue;
+
+        const picked = pickFromControls(controls);
+        if (picked) return picked;
+      }
+
+      const controls = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+        .filter(el => !el.closest('#__dl-panel'))
+        .filter(el => isVisible(el) && !isControlDisabled(el))
+        .filter(el => !looksLikeDownload(el));
+      return pickFromControls(controls);
+    };
+
+    const collectThroughPagination = async () => {
+      const allItems = new Map();
+      const clickedMarkers = new Set();
+
+      const addCurrentPageItems = (items = null) => {
+        const currentPage = getCurrentPageNumber();
+        const source = items || collect(false);
+        for (const item of source) {
+          const enriched = {
+            ...item,
+            sourcePage: Number.isFinite(item.sourcePage)
+              ? item.sourcePage
+              : (Number.isFinite(currentPage) ? currentPage : NaN)
+          };
+
+          if (!allItems.has(item.key)) {
+            allItems.set(item.key, enriched);
+          }
+        }
+      };
+
+      addCurrentPageItems();
+
+      let movedPages = 0;
+      for (let i = 0; i < opts.tableSweepMaxPages; i++) {
+        let pageAdvanced = false;
+
+        // Tenta candidatos alternativos de paginação caso o primeiro não mude a lista.
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const nextControl = findNextPaginationControl(clickedMarkers);
+          if (!nextControl) break;
+
+          const beforeSig = getCollectSignature();
+          const beforePageMarker = getPaginationStateMarker();
+          const marker = getControlMarker(nextControl);
+
+          if (typeof nextControl.click === 'function') {
+            nextControl.click();
+          } else {
+            nextControl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          }
+          clickedMarkers.add(marker);
+
+          const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforePageMarker);
+          if (!changed) {
+            continue;
+          }
+
+          movedPages++;
+          const settledItems = await waitForCollectSettled(opts.tableExpandWaitMs * 6);
+          addCurrentPageItems(settledItems);
+          pageAdvanced = true;
+          break;
+        }
+
+        if (!pageAdvanced) break;
+      }
+
+      return {
+        items: Array.from(allItems.values()),
+        movedPages
+      };
+    };
+
+    const fillQueueFromItems = items => {
+      state.queue = [];
+      state.queuedKeys.clear();
+      state.selectedKeys.clear();
+
+      let added = 0;
+      let skipped = 0;
+
+      for (const it of items) {
+        if (opts.dedupe && state.doneKeys.has(it.key)) {
+          skipped++;
+          continue;
+        }
+
+        if (!state.itemIdByKey.has(it.key)) {
+          state.itemIdByKey.set(it.key, state.nextItemId++);
+        }
+        it.itemId = state.itemIdByKey.get(it.key);
+
+        state.queue.push(it);
+        state.queuedKeys.add(it.key);
+        state.selectedKeys.add(it.key);
+        added++;
+      }
+
+      updateUI();
+      return { added, skipped };
+    };
+
+    const applyQueueNameFilter = (mode, rawInput = null) => {
+      if (mode !== 'keep' && mode !== 'remove') {
+        alert('[BAIXATRON] Modo de filtro invalido. Use keep ou remove.');
+        return null;
+      }
+
+      if (state.running) {
+        alert('[BAIXATRON] Pause os downloads antes de aplicar filtros por nome.');
+        return null;
+      }
+
+      if (state.queue.length === 0) {
+        alert('[BAIXATRON] A fila esta vazia. Use [⊙] Escanear primeiro.');
+        return null;
+      }
+
+      const actionLabel = mode === 'keep' ? 'manter' : 'remover';
+      const raw = typeof rawInput === 'string'
+        ? rawInput
+        : prompt(
+          `[BAIXATRON] Digite os nomes/trechos para ${actionLabel} da checklist.\n` +
+          'Separe por quebra de linha, virgula, ponto e virgula ou barra vertical.'
+        );
+
+      if (raw === null) return null;
+
+      const criteria = parseFilterCriteria(raw);
+      const terms = criteria.terms;
+      if (!terms.length) {
+        alert('[BAIXATRON] Nenhum nome informado.');
+        return null;
+      }
+
+      const totalBefore = state.queue.length;
+      const nextQueue = [];
+      let matched = 0;
+
+      for (const it of state.queue) {
+        const haystack = normLoose([it.titleName, it.text].filter(Boolean).join(' '));
+        const itemId = Number(it.itemId);
+        const idMatch = Number.isFinite(itemId) && criteria.ids.has(itemId);
+        const idRangeMatch = Number.isFinite(itemId) && criteria.idRanges.some(([start, end]) => itemId >= start && itemId <= end);
+        const textMatch = criteria.textTokens.some(token => haystack.includes(token));
+        const isMatch = idMatch || idRangeMatch || textMatch;
+        if (isMatch) matched++;
+
+        const shouldKeep = mode === 'keep' ? isMatch : !isMatch;
+        if (shouldKeep) {
+          nextQueue.push(it);
+        } else {
+          state.selectedKeys.delete(it.key);
+        }
+      }
+
+      state.queue = nextQueue;
+      state.queuedKeys.clear();
+      for (const it of state.queue) {
+        state.queuedKeys.add(it.key);
+      }
+
+      const queueKeys = new Set(state.queue.map(it => it.key));
+      state.selectedKeys.forEach(key => {
+        if (!queueKeys.has(key)) state.selectedKeys.delete(key);
       });
 
-    const map = new Map();
-    for (const it of all) if (!map.has(it.key)) map.set(it.key, it);
+      const totalAfter = nextQueue.length;
+      const removedCount = Math.max(0, totalBefore - totalAfter);
 
-    return Array.from(map.values());
-  };
-
-  // ============================================
-  // SCAN
-  // ============================================
-  const scan = () => {
-    log('>> INICIANDO SCAN DE DOWNLOADS...', 'hack');
-    const items = collect();
-    log(`>> ENCONTRADOS ${items.length} ARQUIVOS`, 'info');
-    
-    state.queue = [];
-    state.queuedKeys.clear();
-    state.selectedKeys.clear();
-    
-    for (const it of items) {
-      if (opts.dedupe && state.doneKeys.has(it.key)) continue;
-      state.queue.push(it);
-      state.queuedKeys.add(it.key);
-      state.selectedKeys.add(it.key);
-    }
-
-    updateUI();
-    return items;
-  };
-
-  // ============================================
-  // CLICK & DOWNLOAD
-  // ============================================
-  const wait = ms => new Promise(r => setTimeout(r, ms));
-
-  const safeClick = async it => {
-    const el = it.el;
-    try {
-      el.scrollIntoView({ block: 'center' });
-    } catch {}
-    
-    await wait(100);
-    
-    try {
-      if (typeof el.click === 'function') {
-        el.click();
-      } else {
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      }
-    } catch (e) {
-      if (it.url) try { window.open(it.url, '_blank'); } catch {}
-      throw e;
-    }
-  };
-
-  const processLoop = async () => {
-    if (!state.running) return;
-
-    while (runningSet.size < opts.concurrency && state.queue.length > 0) {
-      const next = pullNext();
-      if (!next) break;
-      runItem(next);
-    }
-
-    if (!state.running) return;
-
-    if (state.queue.length === 0 && runningSet.size === 0) {
-      state.running = false;
-      log('>> DOWNLOAD COMPLETO - MISSION ACCOMPLISHED', 'success');
       updateUI();
-      return;
-    }
 
-    clearTimeout(state.timer);
-    state.timer = setTimeout(processLoop, opts.delayMs);
-  };
+      console.log(
+        '[BAIXATRON] 🧪 Filtro por nome aplicado | modo:', mode,
+        '| termos:', terms.length,
+        '| correspondencias:', matched,
+        '| removidos da fila:', removedCount,
+        '| restantes:', totalAfter
+      );
 
-  const pullNext = () => {
-    const originalLength = state.queue.length;
-    const skipped = [];
-    
-    for (let i = 0; i < originalLength && state.processed.length < opts.maxClicks; i++) {
-      const candidate = state.queue.shift();
-      if (!candidate) break;
+      alert(
+        `[BAIXATRON] Filtro aplicado (${mode === 'keep' ? 'manter' : 'remover'}).\n` +
+        `Termos: ${terms.length}\n` +
+        `IDs no filtro: ${criteria.ids.size}\n` +
+        `Faixas de ID: ${criteria.idRanges.length}\n` +
+        `Correspondencias: ${matched}\n` +
+        `Removidos da checklist: ${removedCount}\n` +
+        `Restantes: ${totalAfter}`
+      );
+
+      return {
+        mode,
+        termsCount: terms.length,
+        matched,
+        removedCount,
+        remaining: totalAfter
+      };
+    };
+
+    const expandTable = async () => {
+      if (state.running || state.expandingTable) return [];
+
+      state.expandingTable = true;
+      updateUI();
+
+      try {
+        console.log('[BAIXATRON] 🧩 Tentando expandir tabela e paginação...');
+        const baselineItems = collect(false);
+
+        const changedSelects = await expandRowsPerPage();
+        const loadMoreClicks = await clickLoadMoreControls();
+        const pagedResult = await collectThroughPagination();
+
+        let finalItems = pagedResult.items.length ? pagedResult.items : collect(false);
+        if (finalItems.length === 0 && baselineItems.length > 0) {
+          console.warn('[BAIXATRON] ⚠️ Expansão zerou a coleta. Mantendo itens da coleta inicial para evitar perda de fila.');
+          finalItems = baselineItems;
+        }
+        const stats = fillQueueFromItems(finalItems);
+
+        console.log(
+          '[BAIXATRON] ✅ Expansão finalizada | itens:', finalItems.length,
+          '| selects alterados:', changedSelects,
+          '| cliques em "mais":', loadMoreClicks,
+          '| páginas percorridas:', pagedResult.movedPages,
+          '| adicionados:', stats.added,
+          '| pulados:', stats.skipped
+        );
+
+        if (finalItems.length === 0 && state.blockedFrames.length > 0) {
+          console.warn('[BAIXATRON] ⚠️ Nenhum item acessível nesta aba por causa de iframe cross-origin.');
+          console.warn('[BAIXATRON] 💡 Abra o conteúdo com __dl.openBlockedFrames() para escanear no domínio correto.');
+        }
+
+        return finalItems;
+      } catch (err) {
+        console.error('[BAIXATRON] ❌ Falha ao expandir tabela:', err);
+        return [];
+      } finally {
+        state.expandingTable = false;
+        updateUI();
+      }
+    };
+
+    // ============================================
+    // SCAN: Lista todos os downloads
+    // ============================================
+    const scan = () => {
+      const items = collect();
+      console.log('[BAIXATRON] 📊 Coleta: encontrados', items.length, 'botões únicos');
+
+      const { added, skipped } = fillQueueFromItems(items);
+
+      console.log('[BAIXATRON] ✅ Adicionados:', added, '| ⏭️ Pulados:', skipped, '| 📝 Total histórico:', state.doneKeys.size);
+      if (items.length === 0 && state.blockedFrames.length > 0) {
+        console.warn('[BAIXATRON] 💡 Esta página usa iframe cross-origin. Use __dl.openBlockedFrames() ou o botão [↗] Abrir Iframe(s).');
+      }
+      return items;
+    };
+
+    // ============================================
+    // CLICK & DOWNLOAD
+    // ============================================
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+
+    const resolveLiveElementForItem = it => {
+      if (it?.el?.isConnected) return it.el;
+
+      const fresh = collect(false).find(candidate => {
+        if (candidate.key !== it.key) return false;
+
+        const sameTitle = norm(candidate.titleName || candidate.text) === norm(it.titleName || it.text);
+        if (sameTitle) return true;
+
+        return true;
+      });
+      return fresh?.el || null;
+    };
+
+    const ensureItemPageVisible = async it => {
+      const targetPage = it?.sourcePage;
+      if (!Number.isFinite(targetPage)) return;
+
+      const currentPage = getCurrentPageNumber();
+      if (Number.isFinite(currentPage) && currentPage === targetPage) return;
+
+      const moved = await goToPageNumber(targetPage);
+      if (!moved && opts.verbose) {
+        console.warn('[BAIXATRON] ⚠️ Não foi possível navegar para a página do item:', it?.text || it?.titleName, '| página esperada:', targetPage);
+      }
+    };
+
+    const safeClick = async it => {
+      await ensureItemPageVisible(it);
+
+      const el = resolveLiveElementForItem(it) || it.el;
+      const url = toAbs(it.url);
+      const titleFallback = (it.titleName || it.text || 'download').trim();
       
-      if (state.selectedKeys.has(candidate.key)) {
-        // Recoloca items pulados na fila
-        state.queue.unshift(...skipped);
-        return candidate;
-      }
-      skipped.push(candidate);
-    }
-    
-    // Recoloca todos os items pulados
-    state.queue.unshift(...skipped);
-    return null;
-  };
+      try {
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ block: 'center' });
+        }
+      } catch {}
+      
+      await wait(100);
 
-  const waitForCompletion = async () => {
-    if (!opts.waitForDownload) return;
-    log('⏳ Aguardando download completar...', 'info');
-    await wait(opts.waitForDownloadTimeout);
-  };
+      // Em botões com handler JS (sem href), dispare o clique diretamente.
+      if (!url) {
+        const liveEl = resolveLiveElementForItem(it) || el;
+        if (!liveEl || !liveEl.isConnected) {
+          throw new Error('Elemento sem URL não está no DOM atual (possível item de outra página).');
+        }
 
-  const runItem = async it => {
-    runningSet.add(it.key);
-    const itemStartTime = Date.now();
-    updateUI();
-    log(`🎯 Iniciando: ${it.text?.slice(0, 60)}`, 'info');
-    try {
-      await safeClick(it);
-      log('🖱️ Click executado, aguardando...', 'info');
-      await waitForCompletion();
-      const itemDuration = Date.now() - itemStartTime;
-      it.duration = itemDuration;
-      state.doneKeys.add(it.key);
-      state.processed.push(it);
-      log(`[✓] ${it.text || 'arquivo anônimo'}`, 'success');
-    } catch (err) {
-      it.retries = (it.retries || 0) + 1;
-      log(`[⚠] Erro (tentativa ${it.retries}/${opts.maxRetries}): ${it.text?.slice(0, 50)} - ${err.message}`, 'warning');
-      if (it.retries <= opts.maxRetries) {
-        log('🔄 Recolocando na fila para retry...', 'info');
-        state.queue.push(it);
-      } else {
-        log(`[✗] ERRO: ${it.text}`, 'error');
-        state.errors.push({ key: it.key, text: it.text, err: String(err) });
+        if (typeof liveEl.click === 'function') {
+          liveEl.click();
+        } else {
+          liveEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+        return;
       }
-    } finally {
-      runningSet.delete(it.key);
-      log(`⏱️ Aguardando ${opts.delayMs}ms...`, 'info');
-      await wait(opts.delayMs);
+      
+      // Download direto via Fetch + Blob (melhor compatibilidade, sem abrir abas)
+      try {
+        // Fazer fetch do arquivo
+        const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (/text\/html|application\/json|text\/plain/.test(contentType)) {
+          throw new Error(`Resposta não-binária (${contentType || 'sem content-type'})`);
+        }
+        
+        // Receber como octet-stream para forçar download (não abrir PDF)
+        const blob = await response.blob();
+        if (await blobLooksLikeHtml(blob)) {
+          throw new Error('Resposta HTML recebida em vez de arquivo binário');
+        }
+
+        const downloadBlob = new Blob([blob], { type: 'application/octet-stream' });
+        const blobUrl = URL.createObjectURL(downloadBlob);
+        
+        // Extrair nome por header/URL e, se faltar, usar titulo da linha.
+        let fileName = fileNameFromContentDisposition(response.headers.get('content-disposition'));
+        if (!fileName) fileName = fileNameFromUrl(response.url || url);
+        if (!fileName) fileName = fileNameFromUrl(url);
+        
+        // Se não conseguiu nome válido, usar titulo/texto do registro escaneado.
+        if (!fileName || fileName.length < 3) {
+          fileName = titleFallback;
+        }
+        fileName = sanitizeFileName(fileName, 'pdf');
+        
+        // Criar elemento <a> com blob URL
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fileName;
+        a.style.display = 'none'; // Garantir que não seja visível
+        
+        // Adicionar ao DOM e clicar
+        document.body.appendChild(a);
+        a.click();
+        
+        // Limpar
+        await wait(100);
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+        
+      } catch (e) {
+        console.warn('[BAIXATRON] ⚠️ Erro no Fetch, tentando fallback:', e.message);
+
+        // Fallback 1: prioriza clique no elemento original para fluxos JS (ex.: wpdm-download)
+        try {
+          const liveEl = resolveLiveElementForItem(it) || el;
+          if (!liveEl || !liveEl.isConnected) throw e;
+
+          if (typeof liveEl.click === 'function') {
+            liveEl.click();
+          } else {
+            liveEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          }
+          return;
+        } catch (e1) {
+          // segue para fallback por URL
+        }
+        
+        // Fallback 2: tentar com URL direto (se mesmo domínio)
+        try {
+          const a = document.createElement('a');
+          a.href = url;
+          
+          let fileName = fileNameFromUrl(url);
+          
+          if (!fileName || fileName.length < 3) {
+            fileName = titleFallback;
+          }
+          fileName = sanitizeFileName(fileName, 'pdf');
+          
+          a.download = fileName;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          
+          await wait(100);
+          document.body.removeChild(a);
+          
+        } catch (e2) {
+          // Fallback 3: abrir URL (último recurso)
+          if (url) {
+            try { 
+              window.open(url, '_blank'); 
+            } catch (e3) {
+              throw e;
+            }
+          } else {
+            throw e;
+          }
+        }
+      }
+    };
+
+    const processLoop = async () => {
+      if (!state.running) return;
+
+      while (runningSet.size < opts.concurrency && state.queue.length > 0) {
+        const next = pullNext();
+        if (!next) break;
+        runItem(next);
+      }
+
+      if (!state.running) return;
+
+      if (state.queue.length === 0 && runningSet.size === 0) {
+        state.running = false;
+        updateUI();
+        return;
+      }
+
+      clearTimeout(state.timer);
+      state.timer = setTimeout(processLoop, opts.delayMs);
+    };
+
+    const pullNext = () => {
+      const originalLength = state.queue.length;
+      const skipped = [];
+      
+      for (let i = 0; i < originalLength && state.processed.length < opts.maxClicks; i++) {
+        const candidate = state.queue.shift();
+        if (!candidate) break;
+        
+        if (state.selectedKeys.has(candidate.key)) {
+          // Recoloca items pulados na fila
+          state.queue.unshift(...skipped);
+          return candidate;
+        }
+        skipped.push(candidate);
+      }
+      
+      // Recoloca todos os items pulados
+      state.queue.unshift(...skipped);
+      return null;
+    };
+
+    const waitForCompletion = async () => {
+      if (!opts.waitForDownload) return;
+      console.log('[BAIXATRON] ⏳ Aguardando download completar...');
+      await wait(opts.waitForDownloadTimeout);
+      console.log('[BAIXATRON] ⏱️ Timeout atingido, prosseguindo...');
+    };
+
+    const runItem = async it => {
+      runningSet.add(it.key);
+      const itemStartTime = Date.now();
       updateUI();
-    }
-  };
-
-  // ============================================
-  // API PÚBLICA
-  // ============================================
-  const start = () => {
-    if (state.running) return;
-    if (!state.queue.length) scan();
-    
-    if (state.queue.length === 0) {
-      log('ERRO: Nenhum arquivo na fila. Execute scan() primeiro.', 'error');
-      return;
-    }
-
-    state.running = true;
-    state.startedAt = new Date();
-    log(`>> INICIANDO DOWNLOAD DE ${state.queue.length} ARQUIVOS...`, 'hack');
-    updateUI();
-    processLoop();
-  };
-
-  const stop = () => {
-    state.running = false;
-    clearTimeout(state.timer);
-    log('>> DOWNLOAD PAUSADO', 'warning');
-    updateUI();
-  };
-
-  const reset = () => {
-    state.queue = [];
-    state.processed = [];
-    state.errors = [];
-    state.doneKeys.clear();
-    state.queuedKeys.clear();
-    state.selectedKeys.clear();
-    state.running = false;
-    clearTimeout(state.timer);
-    log('>> SISTEMA RESETADO', 'info');
-    updateUI();
-  };
-
-  const setOptions = newOpts => { 
-    Object.assign(opts, newOpts || {});
-  };
-
-  const selectAll = () => {
-    state.queue.forEach(it => state.selectedKeys.add(it.key));
-    updateUI();
-  };
-
-  const deselectAll = () => {
-    state.selectedKeys.clear();
-    updateUI();
-  };
-
-  const toggleSelect = (key) => {
-    if (state.selectedKeys.has(key)) {
-      state.selectedKeys.delete(key);
-    } else {
-      state.selectedKeys.add(key);
-    }
-    updateUI();
-  };
-
-  const toggleTheme = () => {
-    const panel = document.getElementById('__dl-panel');
-    if (!panel) return;
-    
-    const isLightMode = panel.classList.contains('light-mode');
-    if (isLightMode) {
-      panel.classList.remove('light-mode');
-      localStorage.setItem('__dl-theme-hacker', 'dark');
-      const themeBtn = document.getElementById('__dl-theme-toggle');
-      if (themeBtn) themeBtn.textContent = '🌙';
-    } else {
-      panel.classList.add('light-mode');
-      localStorage.setItem('__dl-theme-hacker', 'light');
-      const themeBtn = document.getElementById('__dl-theme-toggle');
-      if (themeBtn) themeBtn.textContent = '☀️';
-    }
-  };
-
-  const getEstimatedTime = () => {
-    if (!state.running || state.processed.length === 0) return null;
-    
-    // Calcular tempo médio por item
-    const processedWithTime = state.processed.filter(it => it.duration);
-    if (processedWithTime.length === 0) return null;
-    
-    const totalDuration = processedWithTime.reduce((sum, it) => sum + it.duration, 0);
-    const avgDuration = totalDuration / processedWithTime.length;
-    
-    // Itens restantes (fila + ativos)
-    const remaining = state.queue.length + runningSet.size;
-    const estimatedMs = remaining * avgDuration;
-    
-    return Math.ceil(estimatedMs / 1000); // retorna em segundos
-  };
-
-  const formatTime = (seconds) => {
-    if (!seconds || seconds <= 0) return '--:--';
-    
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hrs > 0) {
-      return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    }
-    return `${mins}:${String(secs).padStart(2, '0')}`;
-  };
-
-  window.__dl = { 
-    start, stop, reset, scan,
-    selectAll, deselectAll, toggleSelect,
-    setOptions, opts, state,
-    toggleTheme
-  };
-
-  // ============================================
-  // PAINEL VISUAL - HACKER THEME
-  // ============================================
-  const CSS = `
-    * {
-      box-sizing: border-box;
-    }
-
-    #__dl-panel {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      width: 520px;
-      max-height: 85vh;
-      background: #0a0e27;
-      border-radius: 0;
-      border: 2px solid #00ff41;
-      box-shadow: 0 0 20px rgba(0, 255, 65, 0.3), inset 0 0 20px rgba(0, 255, 65, 0.1);
-      font-family: 'Courier New', Consolas, monospace;
-      z-index: 999999;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      animation: slideIn 0.5s ease;
-      color: #00ff41;
-    }
-
-    @keyframes slideIn {
-      from { 
-        transform: translateX(600px); 
-        opacity: 0;
-        filter: blur(10px);
+      console.log('[BAIXATRON] 🎯 Iniciando:', it.text?.slice(0, 60));
+      try {
+        await safeClick(it);
+        console.log('[BAIXATRON] 🖱️ Click executado, aguardando...');
+        await waitForCompletion();
+        const itemDuration = Date.now() - itemStartTime;
+        it.duration = itemDuration;
+        state.doneKeys.add(it.key);
+        state.processed.push(it);
+        console.log('[BAIXATRON] ✅ Download concluído:', it.text?.slice(0, 50));
+      } catch (err) {
+        it.retries = (it.retries || 0) + 1;
+        console.warn(`[BAIXATRON] ⚠️ Erro (tentativa ${it.retries}/${opts.maxRetries}):`, it.text?.slice(0, 50), '-', err.message);
+        if (it.retries <= opts.maxRetries) {
+          console.log('[BAIXATRON] 🔄 Recolocando na fila para retry...');
+          state.queue.push(it);
+        } else {
+          console.error('[BAIXATRON] ❌ Item descartado após max retries:', it.text?.slice(0, 50));
+          state.errors.push({ key: it.key, text: it.text, err: String(err) });
+        }
+      } finally {
+        runningSet.delete(it.key);
+        console.log('[BAIXATRON] ⏱️ Aguardando', opts.delayMs + 'ms...');
+        await wait(opts.delayMs);
+        updateUI();
       }
-      to { 
-        transform: translateX(0); 
-        opacity: 1;
-        filter: blur(0);
+    };
+
+    // ============================================
+    // API PÚBLICA
+    // ============================================
+    const start = async () => {
+      if (state.running) return;
+      if (!state.queue.length) scan();
+      
+      if (state.queue.length === 0) {
+        alert('[BAIXATRON] Nenhum arquivo na fila. Execute scan() primeiro.');
+        return;
       }
-    }
 
-    @keyframes glitch {
-      0%, 100% { text-shadow: 2px 2px #00ff41; }
-      25% { text-shadow: -2px -2px #00ffff; }
-      50% { text-shadow: 2px -2px #ff0055; }
-      75% { text-shadow: -2px 2px #ffff00; }
-    }
+      state.running = true;
+      state.startedAt = new Date();
+      updateUI();
+      processLoop();
+    };
 
-    @keyframes blink {
-      0%, 49%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
+    const stop = () => {
+      state.running = false;
+      clearTimeout(state.timer);
+      updateUI();
+    };
 
-    #__dl-header {
-      background: linear-gradient(90deg, #0a0e27 0%, #1a1f3a 100%);
-      color: #00ff41;
-      padding: 16px;
-      font-weight: bold;
-      font-size: 13px;
-      border-bottom: 2px solid #00ff41;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      cursor: move;
-      user-select: none;
-    }
+    const reset = () => {
+      state.queue = [];
+      state.processed = [];
+      state.errors = [];
+      state.expandingTable = false;
+      state.doneKeys.clear();
+      state.queuedKeys.clear();
+      state.selectedKeys.clear();
+      state.itemIdByKey.clear();
+      state.nextItemId = 1;
+      state.running = false;
+      clearTimeout(state.timer);
+      updateUI();
+    };
 
-    #__dl-header::before {
-      content: '> ';
-      color: #00ffff;
-      animation: blink 1s infinite;
-    }
+    const clearHistory = () => {
+      state.doneKeys.clear();
+      state.processed = [];
+      state.errors = [];
+      console.log('[BAIXATRON] 🗑️ Histórico limpo! Escaneando novamente...');
+      updateUI();
+      // Escanear automaticamente após limpar histórico
+      setTimeout(() => {
+        scan();
+      }, 100);
+    };
 
-    #__dl-header-title {
-      animation: glitch 3s infinite;
-    }
+    const setOptions = newOpts => { 
+      Object.assign(opts, newOpts || {});
+    };
 
-    #__dl-close {
-      background: transparent;
-      border: 1px solid #00ff41;
-      color: #00ff41;
-      cursor: pointer;
-      padding: 4px 8px;
-      border-radius: 0;
-      font-size: 16px;
-      font-family: 'Courier New', monospace;
-      font-weight: bold;
-      transition: all 0.2s;
-    }
+    const selectAll = () => {
+      state.queue.forEach(it => state.selectedKeys.add(it.key));
+      updateUI();
+    };
 
-    #__dl-close:hover {
-      color: #ff0055;
-      border-color: #ff0055;
-      text-shadow: 0 0 10px #ff0055;
-    }
+    const deselectAll = () => {
+      state.selectedKeys.clear();
+      updateUI();
+    };
 
-    #__dl-stats {
-      background: #0f1429;
-      padding: 14px;
-      font-size: 11px;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-      gap: 10px;
-      border-bottom: 1px solid #00ff4133;
-    }
+    const toggleSelect = (key) => {
+      if (state.selectedKeys.has(key)) {
+        state.selectedKeys.delete(key);
+      } else {
+        state.selectedKeys.add(key);
+      }
+      updateUI();
+    };
 
-    .stat-item {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      border-left: 2px solid #00ff41;
-      padding-left: 8px;
-    }
+    const toggleTheme = () => {
+      const panel = document.getElementById('__dl-panel');
+      if (!panel) return;
+      
+      const isLightMode = panel.classList.contains('light-mode');
+      if (isLightMode) {
+        panel.classList.remove('light-mode');
+        localStorage.setItem('__dl-theme-hacker', 'dark');
+        document.getElementById('__dl-theme-toggle').textContent = '🌙';
+      } else {
+        panel.classList.add('light-mode');
+        localStorage.setItem('__dl-theme-hacker', 'light');
+        document.getElementById('__dl-theme-toggle').textContent = '☀️';
+      }
 
-    .stat-label {
-      color: #00ffff;
-      font-weight: bold;
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
+      syncItemsModalTheme();
+    };
 
-    .stat-label::before {
-      content: '[ ';
-      color: #00ff41;
-    }
+    const openBlockedFrames = () => {
+      const frames = (state.blockedFrames || []).filter(src => src && src !== '(iframe sem src)');
+      if (!frames.length) {
+        console.warn('[BAIXATRON] Nenhum iframe bloqueado com URL disponível para abrir.');
+        return [];
+      }
 
-    .stat-label::after {
-      content: ' ]';
-      color: #00ff41;
-    }
+      const opened = [];
+      for (const src of frames) {
+        try {
+          const abs = toAbs(src) || src;
+          const win = window.open(abs, '_blank', 'noopener,noreferrer');
+          if (win) opened.push(abs);
+        } catch (err) {
+          console.warn('[BAIXATRON] Falha ao abrir iframe:', src, err?.message || err);
+        }
+      }
 
-    .stat-value {
-      color: #00ff41;
-      font-weight: bold;
-      font-size: 18px;
-      text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
-    }
+      if (opened.length > 0) {
+        console.log('[BAIXATRON] ↗ Iframe(s) aberto(s):', opened.length);
+      } else {
+        console.warn('[BAIXATRON] O navegador bloqueou a abertura automática. Permita pop-ups e tente novamente.');
+      }
 
-    #__dl-progress {
-      padding: 14px;
-      border-bottom: 1px solid #00ff4133;
-    }
+      return opened;
+    };
 
-    .progress-bar {
-      width: 100%;
-      height: 8px;
-      background: #1a1f3a;
-      border: 1px solid #00ff41;
-      border-radius: 2px;
-      overflow: hidden;
-      box-shadow: inset 0 0 10px rgba(0, 255, 65, 0.2);
-    }
+    const getEstimatedTime = () => {
+      if (!state.running || state.processed.length === 0) return null;
+      
+      // Calcular tempo médio por item
+      const processedWithTime = state.processed.filter(it => it.duration);
+      if (processedWithTime.length === 0) return null;
+      
+      const totalDuration = processedWithTime.reduce((sum, it) => sum + it.duration, 0);
+      const avgDuration = totalDuration / processedWithTime.length;
+      
+      // Itens restantes (fila + ativos)
+      const remaining = state.queue.length + runningSet.size;
+      const estimatedMs = remaining * avgDuration;
+      
+      return Math.ceil(estimatedMs / 1000); // retorna em segundos
+    };
 
-    .progress-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #00ff41, #00ffff);
-      transition: width 0.3s ease;
-      box-shadow: 0 0 15px #00ff41;
-    }
+    const formatTime = (seconds) => {
+      if (!seconds || seconds <= 0) return '--:--';
+      
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      
+      if (hrs > 0) {
+        return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      }
+      return `${mins}:${String(secs).padStart(2, '0')}`;
+    };
 
-    #__dl-controls {
-      padding: 12px;
-      display: flex;
-      gap: 6px;
-      border-bottom: 1px solid #00ff4133;
-      flex-wrap: wrap;
-    }
+    window.__dl = { 
+      start, stop, reset, scan, clearHistory,
+      expandTable,
+      applyQueueNameFilter,
+      openBlockedFrames,
+      selectAll, deselectAll, toggleSelect,
+      setOptions, opts, state,
+      toggleTheme
+    };
 
-    .btn {
-      flex: 1 1 0;
-      min-width: 90px;
-      padding: 8px 10px;
-      border: 1px solid #00ff41;
-      border-radius: 0;
-      font-size: 10px;
-      font-weight: bold;
-      cursor: pointer;
-      transition: all 0.2s;
-      background: #1a1f3a;
-      color: #00ff41;
-      font-family: 'Courier New', monospace;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      white-space: nowrap;
-      text-align: center;
-    }
+    // ============================================
+    // PAINEL VISUAL - HTML/CSS
+    // ============================================
+    const CSS = `
+      * {
+        box-sizing: border-box;
+      }
 
-    .btn::before {
-      content: '< ';
-    }
-
-    .btn::after {
-      content: ' >';
-    }
-
-    .btn:hover:not(:disabled) {
-      border-color: #00ffff;
-      color: #00ffff;
-      text-shadow: 0 0 10px #00ffff;
-      box-shadow: inset 0 0 10px rgba(0, 255, 255, 0.2);
-    }
-
-    .btn-primary {
-      background: #00ff41;
-      color: #0a0e27;
-      border-color: #00ff41;
-    }
-
-    .btn-primary:hover:not(:disabled) {
-      background: #00ffff;
-      border-color: #00ffff;
-      color: #0a0e27;
-    }
-
-    .btn-danger {
-      border-color: #ff0055;
-      color: #ff0055;
-    }
-
-    .btn-danger:hover:not(:disabled) {
-      background: #ff0055;
-      color: #ffffff;
-      box-shadow: inset 0 0 10px rgba(255, 0, 85, 0.3);
-    }
-
-    .btn:disabled {
-      opacity: 0.3;
-      cursor: not-allowed;
-    }
-
-    #__dl-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px;
-    }
-
-    .download-item {
-      display: flex;
-      align-items: center;
-      padding: 8px;
-      border-radius: 0;
-      margin-bottom: 4px;
-      background: #1a1f3a;
-      border: 1px solid #00ff4144;
-      transition: all 0.2s;
-      gap: 8px;
-      font-size: 10px;
-    }
-
-    .download-item:hover {
-      background: #242a3a;
-      border-color: #00ffff;
-      box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
-    }
-
-    .download-item.done {
-      background: #0a2a0a;
-      border-color: #00ff41;
-      box-shadow: 0 0 8px rgba(0, 255, 65, 0.2);
-    }
-
-    .download-item.processing {
-      background: #2a1a0a;
-      border-color: #ffff00;
-      animation: blink 0.5s infinite;
-      box-shadow: 0 0 8px rgba(255, 255, 0, 0.2);
-    }
-
-    .download-checkbox {
-      width: 14px;
-      height: 14px;
-      cursor: pointer;
-      accent-color: #00ff41;
-      border: 1px solid #00ff41;
-    }
-
-    .download-name {
-      flex: 1;
-      font-size: 10px;
-      color: #00ffff;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      font-family: 'Courier New', monospace;
-    }
-
-    .download-item.done .download-name {
-      color: #00ff41;
-    }
-
-    .download-item.processing .download-name {
-      color: #ffff00;
-    }
-
-    .download-icon {
-      font-size: 11px;
-      color: #00ff41;
-      min-width: 12px;
-      text-align: center;
-      font-weight: bold;
-    }
-
-    .download-item.done .download-icon {
-      color: #00ff41;
-      text-shadow: 0 0 5px #00ff41;
-    }
-
-    .download-item.processing .download-icon {
-      color: #ffff00;
-    }
-
-    .speed-control {
-      padding: 12px;
-      border-top: 1px solid #00ff4133;
-      font-size: 11px;
-    }
-
-    .speed-label {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      color: #00ffff;
-      font-weight: bold;
-      letter-spacing: 1px;
-    }
-
-    .speed-label::before {
-      content: '[ ';
-      color: #00ff41;
-    }
-
-    input[type="range"] {
-      width: 100%;
-      height: 6px;
-      border-radius: 0;
-      background: #1a1f3a;
-      outline: none;
-      -webkit-appearance: none;
-      appearance: none;
-      border: 1px solid #00ff4144;
-    }
-
-    input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 14px;
-      height: 14px;
-      border-radius: 0;
-      background: #00ff41;
-      cursor: pointer;
-      transition: all 0.2s;
-      box-shadow: 0 0 8px #00ff41;
-    }
-
-    input[type="range"]::-webkit-slider-thumb:hover {
-      background: #00ffff;
-      box-shadow: 0 0 12px #00ffff;
-    }
-
-    input[type="range"]::-moz-range-thumb {
-      width: 14px;
-      height: 14px;
-      border-radius: 0;
-      background: #00ff41;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
-      box-shadow: 0 0 8px #00ff41;
-    }
-
-    input[type="range"]::-moz-range-thumb:hover {
-      background: #00ffff;
-      box-shadow: 0 0 12px #00ffff;
-    }
-
-    #__dl-list::-webkit-scrollbar {
-      width: 8px;
-    }
-
-    #__dl-list::-webkit-scrollbar-track {
-      background: #0a0e27;
-    }
-
-    #__dl-list::-webkit-scrollbar-thumb {
-      background: #00ff4166;
-      border-radius: 0;
-    }
-
-    #__dl-list::-webkit-scrollbar-thumb:hover {
-      background: #00ff41;
-    }
-
-    @media (max-width: 600px) {
       #__dl-panel {
-        width: calc(100% - 20px);
+        position: fixed;
+        top: 10px;
         right: 10px;
-        left: 10px;
-        max-height: 80vh;
+        width: 520px;
+        max-height: 85vh;
+        background: #0a0e27;
+        border-radius: 0;
+        border: 2px solid #00ff41;
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.3), inset 0 0 20px rgba(0, 255, 65, 0.1);
+        font-family: 'Courier New', Consolas, monospace;
+        z-index: 999999;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        animation: slideIn 0.5s ease;
+        color: #00ff41;
+      }
+
+      @keyframes slideIn {
+        from {
+          transform: translateX(600px);
+          opacity: 0;
+          filter: blur(10px);
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+          filter: blur(0);
+        }
+      }
+
+      @keyframes glitch {
+        0%, 100% { text-shadow: 2px 2px #00ff41; }
+        25% { text-shadow: -2px -2px #00ffff; }
+        50% { text-shadow: 2px -2px #ff0055; }
+        75% { text-shadow: -2px 2px #ffff00; }
+      }
+
+      @keyframes blink {
+        0%, 49%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+
+      #__dl-header {
+        background: linear-gradient(90deg, #0a0e27 0%, #1a1f3a 100%);
+        color: #00ff41;
+        padding: 16px;
+        font-weight: bold;
+        font-size: 13px;
+        border-bottom: 2px solid #00ff41;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        cursor: move;
+        user-select: none;
+      }
+
+      #__dl-header::before {
+        content: '> ';
+        color: #00ffff;
+        animation: blink 1s infinite;
+      }
+
+      #__dl-header-title {
+        animation: glitch 3s infinite;
+      }
+
+      #__dl-close,
+      #__dl-theme-toggle {
+        background: transparent;
+        border: 1px solid #00ff41;
+        color: #00ff41;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 0;
+        font-size: 14px;
+        font-family: 'Courier New', monospace;
+        font-weight: bold;
+        transition: all 0.2s;
+      }
+
+      #__dl-close:hover,
+      #__dl-theme-toggle:hover {
+        color: #00ffff;
+        border-color: #00ffff;
+        text-shadow: 0 0 10px #00ffff;
+        box-shadow: inset 0 0 10px rgba(0, 255, 255, 0.2);
+      }
+
+      #__dl-warning {
+        cursor: pointer;
+        transition: all 0.25s ease;
+        background: #2a1f06 !important;
+        color: #ffe58a !important;
+        border-left: 4px solid #ffff00 !important;
+      }
+
+      #__dl-warning:hover {
+        opacity: 0.85;
+      }
+
+      #__dl-warning.hidden {
+        display: none !important;
+      }
+
+      #__dl-stats {
+        background: #0f1429;
+        padding: 14px;
+        font-size: 11px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+        gap: 10px;
+        border-bottom: 1px solid #00ff4133;
+      }
+
+      .stat-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        border-left: 2px solid #00ff41;
+        padding-left: 8px;
+      }
+
+      .stat-label {
+        color: #00ffff;
+        font-weight: bold;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .stat-label::before {
+        content: '[ ';
+        color: #00ff41;
+      }
+
+      .stat-label::after {
+        content: ' ]';
+        color: #00ff41;
+      }
+
+      .stat-value {
+        color: #00ff41;
+        font-weight: bold;
+        font-size: 18px;
+        text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+      }
+
+      #__dl-progress {
+        padding: 14px;
+        border-bottom: 1px solid #00ff4133;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 8px;
+        background: #1a1f3a;
+        border: 1px solid #00ff41;
+        border-radius: 2px;
+        overflow: hidden;
+        box-shadow: inset 0 0 10px rgba(0, 255, 65, 0.2);
+      }
+
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #00ff41, #00ffff);
+        transition: width 0.3s ease;
+        box-shadow: 0 0 15px #00ff41;
+      }
+
+      #__dl-progress-text {
+        display: none;
       }
 
       #__dl-controls {
-        padding: 8px;
-        gap: 4px;
+        padding: 12px;
+        display: flex;
+        gap: 6px;
+        border-bottom: 1px solid #00ff4133;
+        flex-wrap: wrap;
       }
 
       .btn {
-        min-width: 50px;
-        padding: 6px 8px;
-        font-size: 9px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        flex: 1 1 120px;
+        min-width: 90px;
+        max-width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #00ff41;
+        border-radius: 0;
+        font-size: 10px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.2s;
+        background: #1a1f3a;
+        color: #00ff41;
+        font-family: 'Courier New', monospace;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        white-space: normal;
+        text-align: center;
       }
-    }
-  `;
 
-  // ============================================
-  // RENDERIZAR PAINEL
-  // ============================================
-  const createPanel = () => {
-    const existing = document.getElementById('__dl-panel');
-    if (existing) existing.remove();
+      .btn::before {
+        content: '< ';
+      }
 
-    const panel = document.createElement('div');
-    panel.id = '__dl-panel';
-    panel.innerHTML = `
-      <div id="__dl-header">
-        <span id="__dl-header-title">BAIXATRON HACKER</span>
-        <button id="__dl-close">✕</button>
-      </div>
+      .btn::after {
+        content: ' >';
+      }
 
-      <div id="__dl-stats">
-        <div class="stat-item">
-          <span class="stat-label">Queue</span>
-          <span class="stat-value" id="stat-queue">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Active</span>
-          <span class="stat-value" id="stat-active">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Pwned</span>
-          <span class="stat-value" id="stat-processed">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Select</span>
-          <span class="stat-value" id="stat-selected">0</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Failed</span>
-          <span class="stat-value" id="stat-errors">0</span>
-        </div>
-      </div>
+      .btn:hover:not(:disabled) {
+        border-color: #00ffff;
+        color: #00ffff;
+        text-shadow: 0 0 10px #00ffff;
+        box-shadow: inset 0 0 10px rgba(0, 255, 255, 0.2);
+      }
 
-      <div id="__dl-progress">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span style="font-size: 11px; font-weight: 600; color: #00ff41;" id="progress-percent">0%</span>
-          <span style="font-size: 11px; color: #00ffff;" id="progress-time">--:--</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="__dl-progress-fill" style="width: 0%"></div>
-        </div>
-      </div>
+      .btn-primary {
+        background: #00ff41;
+        color: #0a0e27;
+        border-color: #00ff41;
+      }
 
-      <div id="__dl-controls">
-        <button class="btn btn-primary" id="btn-scan">Scan</button>
-        <button class="btn btn-primary" id="btn-start">Start</button>
-        <button class="btn btn-secondary" id="btn-stop" disabled>Stop</button>
-        <button class="btn btn-secondary" id="btn-select-all">Select</button>
-        <button class="btn btn-secondary" id="btn-deselect-all">Clear</button>
-        <button class="btn btn-danger" id="btn-reset">Reset</button>
-      </div>
+      .btn-primary:hover:not(:disabled) {
+        background: #00ffff;
+        border-color: #00ffff;
+        color: #0a0e27;
+      }
 
-      <div id="__dl-list"></div>
+      .btn-danger {
+        border-color: #ff0055;
+        color: #ff0055;
+      }
 
-      <div class="speed-control">
-        <div class="speed-label">
-          <span>VELOCITY</span>
-          <span id="speed-value">800ms</span>
-        </div>
-        <input type="range" id="speed-slider" min="200" max="3000" step="100" value="800">
-      </div>
+      .btn-danger:hover:not(:disabled) {
+        background: #ff0055;
+        color: #ffffff;
+        box-shadow: inset 0 0 10px rgba(255, 0, 85, 0.3);
+      }
+
+      .btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+      }
+
+      #__dl-list-summary {
+        padding: 10px 12px;
+        border-bottom: 1px solid #00ff4133;
+        color: #00ffff;
+        font-size: 11px;
+        background: #0f1429;
+      }
+
+      #__dl-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+      }
+
+      .download-item {
+        display: flex;
+        align-items: center;
+        padding: 8px;
+        border-radius: 0;
+        margin-bottom: 4px;
+        background: #1a1f3a;
+        border: 1px solid #00ff4144;
+        transition: all 0.2s;
+        gap: 8px;
+        font-size: 10px;
+      }
+
+      .download-item:hover {
+        background: #242a3a;
+        border-color: #00ffff;
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+      }
+
+      .download-item.done {
+        background: #0a2a0a;
+        border-color: #00ff41;
+        box-shadow: 0 0 8px rgba(0, 255, 65, 0.2);
+      }
+
+      .download-item.processing {
+        background: #2a1a0a;
+        border-color: #ffff00;
+        animation: blink 0.5s infinite;
+        box-shadow: 0 0 8px rgba(255, 255, 0, 0.2);
+      }
+
+      .download-checkbox {
+        width: 14px;
+        height: 14px;
+        cursor: pointer;
+        accent-color: #00ff41;
+      }
+
+      .download-id {
+        min-width: 64px;
+        font-size: 10px;
+        color: #00ffff;
+        font-weight: bold;
+      }
+
+      .download-name {
+        flex: 1;
+        font-size: 10px;
+        color: #00ffff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-family: 'Courier New', monospace;
+      }
+
+      .download-item.done .download-name {
+        color: #00ff41;
+      }
+
+      .download-item.processing .download-name {
+        color: #ffff00;
+      }
+
+      .download-icon {
+        font-size: 11px;
+        color: #00ff41;
+        min-width: 12px;
+        text-align: center;
+        font-weight: bold;
+      }
+
+      .download-item.processing .download-icon {
+        color: #ffff00;
+      }
+
+      .speed-control {
+        padding: 12px;
+        border-top: 1px solid #00ff4133;
+        font-size: 11px;
+      }
+
+      .speed-label {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        color: #00ffff;
+        font-weight: bold;
+        letter-spacing: 1px;
+      }
+
+      .speed-label::before {
+        content: '[ ';
+        color: #00ff41;
+      }
+
+      .speed-label::after {
+        content: ' ]';
+        color: #00ff41;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        height: 6px;
+        border-radius: 0;
+        background: #1a1f3a;
+        outline: none;
+        -webkit-appearance: none;
+        appearance: none;
+        border: 1px solid #00ff4144;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 0;
+        background: #00ff41;
+        cursor: pointer;
+        transition: all 0.2s;
+        box-shadow: 0 0 8px #00ff41;
+      }
+
+      input[type="range"]::-webkit-slider-thumb:hover {
+        background: #00ffff;
+        box-shadow: 0 0 12px #00ffff;
+      }
+
+      input[type="range"]::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 0;
+        background: #00ff41;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        box-shadow: 0 0 8px #00ff41;
+      }
+
+      input[type="range"]::-moz-range-thumb:hover {
+        background: #00ffff;
+        box-shadow: 0 0 12px #00ffff;
+      }
+
+      #__dl-list::-webkit-scrollbar,
+      #__dl-modal-list::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      #__dl-list::-webkit-scrollbar-track,
+      #__dl-modal-list::-webkit-scrollbar-track {
+        background: #0a0e27;
+      }
+
+      #__dl-list::-webkit-scrollbar-thumb,
+      #__dl-modal-list::-webkit-scrollbar-thumb {
+        background: #00ff4166;
+        border-radius: 0;
+      }
+
+      #__dl-list::-webkit-scrollbar-thumb:hover,
+      #__dl-modal-list::-webkit-scrollbar-thumb:hover {
+        background: #00ff41;
+      }
+
+      #__dl-items-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 1000000;
+        background: rgba(0, 10, 20, 0.78);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+
+      #__dl-items-modal.hidden {
+        display: none;
+      }
+
+      #__dl-items-modal .modal-card {
+        width: min(920px, 100%);
+        max-height: 88vh;
+        background: #0a0e27;
+        color: #00ff41;
+        border: 2px solid #00ff41;
+        border-radius: 0;
+        box-shadow: 0 0 18px rgba(0, 255, 65, 0.28), inset 0 0 16px rgba(0, 255, 65, 0.08);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        font-family: 'Courier New', Consolas, monospace;
+      }
+
+      #__dl-items-modal .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid #00ff4133;
+        font-size: 12px;
+        font-weight: bold;
+        color: #00ffff;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+
+      #__dl-items-modal .modal-body {
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+      }
+
+      #__dl-filter-input {
+        width: 100%;
+        min-height: 72px;
+        resize: vertical;
+        border-radius: 0;
+        border: 1px solid #00ff4133;
+        background: #121938;
+        color: #00ffff;
+        padding: 8px;
+        font-size: 12px;
+        font-family: 'Courier New', Consolas, monospace;
+      }
+
+      #__dl-filter-input:focus {
+        outline: none;
+        border-color: #00ffff;
+        box-shadow: 0 0 8px rgba(0, 255, 255, 0.25);
+      }
+
+      #__dl-filter-help {
+        color: #8ce8ff;
+        font-size: 10px;
+      }
+
+      #__dl-modal-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      #__dl-modal-summary {
+        font-size: 11px;
+        color: #00ffff;
+      }
+
+      #__dl-modal-list {
+        min-height: 160px;
+        max-height: 46vh;
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+
+      #__dl-modal-list .download-item {
+        margin-bottom: 6px;
+      }
+
+      @media (max-width: 600px) {
+        #__dl-panel {
+          width: calc(100% - 20px);
+          right: 10px;
+          left: 10px;
+          max-height: 80vh;
+        }
+
+        #__dl-controls {
+          padding: 8px;
+          gap: 4px;
+        }
+
+        .btn {
+          flex: 1 1 48%;
+          min-width: 0;
+          padding: 6px 8px;
+          font-size: 9px;
+        }
+
+        #__dl-items-modal {
+          padding: 8px;
+        }
+
+        #__dl-items-modal .modal-card {
+          max-height: 92vh;
+        }
+
+        #__dl-modal-list {
+          max-height: 52vh;
+        }
+      }
     `;
 
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
-
-    document.body.appendChild(panel);
-
-    document.getElementById('__dl-close').onclick = () => panel.remove();
-    document.getElementById('btn-scan').onclick = () => { scan(); };
-    document.getElementById('btn-start').onclick = () => start();
-    document.getElementById('btn-stop').onclick = () => stop();
-    document.getElementById('btn-select-all').onclick = () => selectAll();
-    document.getElementById('btn-deselect-all').onclick = () => deselectAll();
-    document.getElementById('btn-reset').onclick = () => { if (confirm('[!] RESETAR SISTEMA? [Y/N]')) reset(); };
-    
-    document.getElementById('speed-slider').onchange = (e) => {
-      const value = parseInt(e.target.value);
-      opts.delayMs = value;
-      document.getElementById('speed-value').textContent = value + 'ms';
+    const syncItemsModalTheme = () => {
+      const panel = document.getElementById('__dl-panel');
+      const modal = document.getElementById('__dl-items-modal');
+      if (!panel || !modal) return;
+      modal.classList.toggle('light-mode', panel.classList.contains('light-mode'));
     };
 
-    enableDrag(panel, document.getElementById('__dl-header'));
-    updateUI();
-  };
+    const renderItemsModalList = () => {
+      const listEl = document.getElementById('__dl-modal-list');
+      const summaryEl = document.getElementById('__dl-modal-summary');
+      if (!listEl || !summaryEl) return;
 
-  // ============================================
-  // ARRASTAR PAINEL
-  // ============================================
-  const enableDrag = (panel, handle) => {
-    if (!panel || !handle) return;
+      summaryEl.textContent = `Itens na fila: ${state.queue.length} | Selecionados: ${state.selectedKeys.size}`;
+      listEl.innerHTML = '';
 
-    const dragState = { active: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0 };
-
-    const onMove = e => {
-      if (!dragState.active) return;
-      const x = e.clientX - dragState.offsetX;
-      const y = e.clientY - dragState.offsetY;
-      panel.style.right = '';
-      panel.style.left = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, x)) + 'px';
-      panel.style.top = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, y)) + 'px';
-    };
-
-    const onUp = () => {
-      dragState.active = false;
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-
-    handle.addEventListener('mousedown', e => {
-      dragState.active = true;
-      dragState.offsetX = e.clientX - panel.getBoundingClientRect().left;
-      dragState.offsetY = e.clientY - panel.getBoundingClientRect().top;
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  };
-
-  // ============================================
-  // ATUALIZAR PAINEL
-  // ============================================
-  const updateUI = () => {
-    const panel = document.getElementById('__dl-panel');
-    if (!panel) return;
-
-    document.getElementById('stat-queue').textContent = state.queue.length;
-    document.getElementById('stat-active').textContent = runningSet.size;
-    document.getElementById('stat-processed').textContent = state.processed.length;
-    document.getElementById('stat-selected').textContent = state.selectedKeys.size;
-    document.getElementById('stat-errors').textContent = state.errors.length;
-
-    const total = state.processed.length + state.queue.length + runningSet.size;
-    const percent = total > 0 ? Math.round((state.processed.length / total) * 100) : 0;
-    const progressFill = document.getElementById('__dl-progress-fill');
-    progressFill.style.width = percent + '%';
-    
-    // Atualizar porcentagem e tempo estimado
-    const percentEl = document.getElementById('progress-percent');
-    const timeEl = document.getElementById('progress-time');
-    if (percentEl) percentEl.textContent = percent + '%';
-    if (timeEl) {
-      const estimatedSeconds = getEstimatedTime();
-      if (estimatedSeconds && state.running) {
-        timeEl.textContent = '⏱️ ' + formatTime(estimatedSeconds);
-      } else if (state.running) {
-        timeEl.textContent = '⏱️ calculating...';
-      } else {
-        timeEl.textContent = '--:--';
+      if (state.queue.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.padding = '12px';
+        empty.style.fontSize = '12px';
+        empty.style.opacity = '0.8';
+        empty.textContent = 'Nenhum item na fila. Execute [⊙] Escanear para carregar downloads.';
+        listEl.appendChild(empty);
+        return;
       }
-    }
 
-    document.getElementById('btn-start').disabled = state.running || state.queue.length === 0;
-    document.getElementById('btn-stop').disabled = !state.running;
-    document.getElementById('btn-scan').disabled = state.running;
+      state.queue.forEach((it, idx) => {
+        const isSelected = state.selectedKeys.has(it.key);
+        const isProcessing = state.running && idx === 0;
+        const isDone = state.doneKeys.has(it.key);
+        const displayId = String(it.itemId || (idx + 1)).padStart(4, '0');
 
-    const listEl = document.getElementById('__dl-list');
-    listEl.innerHTML = '';
+        const item = document.createElement('div');
+        item.className = 'download-item';
+        if (isDone) item.classList.add('done');
+        if (isProcessing) item.classList.add('processing');
 
-    state.queue.forEach((it, idx) => {
-      const isSelected = state.selectedKeys.has(it.key);
-      const isProcessing = state.running && idx === 0;
-      const isDone = state.doneKeys.has(it.key);
+        item.innerHTML = `
+          <input type="checkbox" class="download-checkbox" ${isSelected ? 'checked' : ''}>
+          <span class="download-id">ID ${displayId}</span>
+          <span class="download-name" title="${it.text || ''}">${it.text || '(sem nome)'}</span>
+          <span class="download-icon">${isDone ? '[✓]' : isProcessing ? '[~]' : '[ ]'}</span>
+        `;
 
-      const item = document.createElement('div');
-      item.className = 'download-item';
-      if (isDone) item.classList.add('done');
-      if (isProcessing) item.classList.add('processing');
+        const checkbox = item.querySelector('.download-checkbox');
+        if (checkbox) {
+          checkbox.onchange = () => toggleSelect(it.key);
+        }
 
-      item.innerHTML = `
-        <input type="checkbox" class="download-checkbox" ${isSelected ? 'checked' : ''}>
-        <span class="download-name" title="${it.text}">${it.text || '[ANONYMOUS]'}</span>
-        <span class="download-icon">${isDone ? '[✓]' : isProcessing ? '[~]' : '[ ]'}</span>
+        listEl.appendChild(item);
+      });
+    };
+
+    const closeItemsModal = () => {
+      const modal = document.getElementById('__dl-items-modal');
+      if (!modal) return;
+      modal.classList.add('hidden');
+    };
+
+    const openItemsModal = () => {
+      const modal = document.getElementById('__dl-items-modal');
+      if (!modal) return;
+      syncItemsModalTheme();
+      renderItemsModalList();
+      modal.classList.remove('hidden');
+    };
+
+    const createItemsModal = () => {
+      const existing = document.getElementById('__dl-items-modal');
+      if (existing) existing.remove();
+
+      const modal = document.createElement('div');
+      modal.id = '__dl-items-modal';
+      modal.className = 'hidden';
+      modal.innerHTML = `
+        <div class="modal-card" role="dialog" aria-modal="true" aria-label="Itens e filtros do Baixatron Hacker">
+          <div class="modal-header">
+            <span>📋 Itens da Fila e Filtros</span>
+            <button class="btn" id="btn-modal-close" style="flex:0 0 auto; min-width:40px; padding:6px 10px;">✕</button>
+          </div>
+          <div class="modal-body">
+            <textarea id="__dl-filter-input" placeholder="Digite nomes, IDs ou faixas de ID (ex.: 15, id:15, 10-30, de id 10 ate id 30)..."></textarea>
+            <div id="__dl-filter-help">Separadores aceitos: quebra de linha, virgula, ponto e virgula e barra vertical. Para ID use numero ou id:15. Para faixa use 10-30, 10 ate 30 ou de id 10 ate id 30.</div>
+            <div id="__dl-modal-actions">
+              <button class="btn btn-secondary" id="btn-modal-keep">[✓] Manter Nomes</button>
+              <button class="btn btn-secondary" id="btn-modal-remove">[✂] Remover Nomes</button>
+              <button class="btn btn-secondary" id="btn-modal-select-all">[+] Selecionar Todos</button>
+              <button class="btn btn-secondary" id="btn-modal-deselect-all">[-] Desmarcar Todos</button>
+              <button class="btn btn-secondary" id="btn-modal-clear-filter">[⌫] Limpar Campo</button>
+            </div>
+            <div id="__dl-modal-summary"></div>
+            <div id="__dl-modal-list"></div>
+          </div>
+        </div>
       `;
 
-      item.querySelector('.download-checkbox').onchange = () => toggleSelect(it.key);
-      listEl.appendChild(item);
-    });
-  };
+      document.body.appendChild(modal);
+      syncItemsModalTheme();
 
-  // ============================================
-  // INICIALIZAÇÃO
-  // ============================================
-  console.clear();
-  console.log('%c╔═══════════════════════════════════════════╗', 'color: #00ff41; font-family: Courier New; font-weight: bold');
-  console.log('%c║  BAIXATRON HACKER EDITION ATIVADO        ║', 'color: #00ff41; font-family: Courier New; font-weight: bold');
-  console.log('%c║  > SISTEMA DE INVASÃO DE DOWNLOADS      ║', 'color: #00ffff; font-family: Courier New');
-  console.log('%c║  > ACESSO: ELITE HACKER MODE            ║', 'color: #ffff00; font-family: Courier New');
-  console.log('%c╚═══════════════════════════════════════════╝', 'color: #00ff41; font-family: Courier New; font-weight: bold');
-  
-  log('Sistema inicializado com sucesso!', 'success');
-  log('Comandos disponíveis no console:', 'info');
-  console.log('%c  __dl.scan()      - Escanear downloads', 'color: #00ffff; font-family: Courier New');
-  console.log('%c  __dl.start()     - Iniciar downloads', 'color: #00ffff; font-family: Courier New');
-  console.log('%c  __dl.stop()      - Parar processo', 'color: #00ffff; font-family: Courier New');
-  console.log('%c  __dl.reset()     - Resetar sistema', 'color: #00ffff; font-family: Courier New');
+      const filterInput = modal.querySelector('#__dl-filter-input');
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', createPanel);
-  } else {
-    createPanel();
-  }
+      modal.querySelector('#btn-modal-close').onclick = () => closeItemsModal();
+      modal.querySelector('#btn-modal-clear-filter').onclick = () => {
+        if (filterInput) filterInput.value = '';
+      };
+      modal.querySelector('#btn-modal-select-all').onclick = () => selectAll();
+      modal.querySelector('#btn-modal-deselect-all').onclick = () => deselectAll();
+      modal.querySelector('#btn-modal-keep').onclick = () => {
+        applyQueueNameFilter('keep', filterInput?.value || '');
+      };
+      modal.querySelector('#btn-modal-remove').onclick = () => {
+        applyQueueNameFilter('remove', filterInput?.value || '');
+      };
 
-})();
+      modal.addEventListener('click', e => {
+        if (e.target === modal) {
+          closeItemsModal();
+        }
+      });
+    };
+
+    window.__dl.openItemsModal = openItemsModal;
+
+    // ============================================
+    // RENDERIZAR PAINEL
+    // ============================================
+    const createPanel = () => {
+      const existing = document.getElementById('__dl-panel');
+      if (existing) existing.remove();
+
+      const panel = document.createElement('div');
+      panel.id = '__dl-panel';
+      panel.innerHTML = `
+        <div id="__dl-header">
+          <span id="__dl-header-title">👾 BAIXATRON HACKER 📡</span>
+          <div style="display: flex; gap: 4px;">
+            <button id="__dl-theme-toggle" title="Alternar tema">🌙</button>
+            <button id="__dl-close">✕</button>
+          </div>
+        </div>
+
+        <div id="__dl-warning" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 0; font-size: 11px; color: #856404; display: flex; gap: 8px; align-items: flex-start;">
+          <span style="font-size: 16px; flex-shrink: 0;">⚠️</span>
+          <div style="flex: 1;">
+            <strong>Aviso de Segurança:</strong>
+            <p style="margin: 4px 0 0 0;"><strong>O navegador pode pedir confirmação para downloads.</strong> Opções:</p>
+            <ul style="margin: 4px 0 0 0; padding-left: 20px;">
+              <li>Se aparecer caixa: marque <strong>"Sempre fazer isso"</strong> (nem todos navegadores mostram)</li>
+              <li>Senão: confirme cada download ou configure preferências do navegador</li>
+              <li>Aumente o delay entre downloads se necessário</li>
+            </ul>
+            <p style="margin: 4px 0 0 0; font-size: 10px; opacity: 0.8;">Clique aqui para fechar este aviso.</p>
+          </div>
+        </div>
+
+        <div id="__dl-stats">
+          <div class="stat-item">
+            <span class="stat-label">Fila</span>
+            <span class="stat-value" id="stat-queue">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Ativos</span>
+            <span class="stat-value" id="stat-active">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Processados</span>
+            <span class="stat-value" id="stat-processed">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Selecionados</span>
+            <span class="stat-value" id="stat-selected">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Erros</span>
+            <span class="stat-value" id="stat-errors">0</span>
+          </div>
+        </div>
+
+        <div id="__dl-progress">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 11px; font-weight: 600;" id="progress-percent">0%</span>
+            <span style="font-size: 11px; color: #888;" id="progress-time">--:--</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="__dl-progress-fill" style="width: 0%">
+              <span id="__dl-progress-text"></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="__dl-controls">
+          <button class="btn btn-primary" id="btn-scan">[⊙] Escanear</button>
+          <button class="btn btn-secondary" id="btn-expand-table">[⇵] Tabela+Páginas</button>
+          <button class="btn btn-secondary" id="btn-open-iframes">[↗] Abrir Iframe(s)</button>
+          <button class="btn btn-secondary" id="btn-open-items-modal">[📋] Itens e Filtros</button>
+          <button class="btn btn-primary" id="btn-start">[▶] Iniciar</button>
+          <button class="btn btn-secondary" id="btn-stop" disabled>[⏸] Pausar</button>
+          <button class="btn btn-secondary" id="btn-select-all">[+] Todos</button>
+          <button class="btn btn-secondary" id="btn-deselect-all">[-] Nenhum</button>
+          <button class="btn btn-secondary" id="btn-clear-history">[🗑️] Limpar Histórico</button>
+          <button class="btn btn-danger" id="btn-reset">[↻] Reset Total</button>
+        </div>
+
+        <div id="__dl-list-summary">Use [📋] Itens e Filtros para ver a lista com IDs e aplicar filtros.</div>
+
+        <div class="speed-control">
+          <div class="speed-label">
+            <span>Velocidade</span>
+            <span id="speed-value">800ms</span>
+          </div>
+          <input type="range" id="speed-slider" min="200" max="3000" step="100" value="800">
+        </div>
+      `;
+
+      const style = document.createElement('style');
+      style.textContent = CSS;
+      document.head.appendChild(style);
+
+      document.body.appendChild(panel);
+
+      document.getElementById('__dl-close').onclick = () => {
+        panel.remove();
+        const modal = document.getElementById('__dl-items-modal');
+        if (modal) modal.remove();
+      };
+      document.getElementById('__dl-theme-toggle').onclick = () => toggleTheme();
+      document.getElementById('__dl-warning').onclick = () => {
+        document.getElementById('__dl-warning').classList.add('hidden');
+        localStorage.setItem('__dl-warning-closed-hacker', 'true');
+      };
+      document.getElementById('btn-scan').onclick = () => { scan(); };
+      document.getElementById('btn-expand-table').onclick = () => { expandTable(); };
+      document.getElementById('btn-open-iframes').onclick = () => { openBlockedFrames(); };
+      document.getElementById('btn-open-items-modal').onclick = () => openItemsModal();
+      document.getElementById('btn-start').onclick = () => start();
+      document.getElementById('btn-stop').onclick = () => stop();
+      document.getElementById('btn-select-all').onclick = () => selectAll();
+      document.getElementById('btn-deselect-all').onclick = () => deselectAll();
+      document.getElementById('btn-clear-history').onclick = () => { 
+        if (confirm('Limpar histórico de downloads? Isso permitirá escanear novamente todos os arquivos.')) clearHistory(); 
+      };
+      document.getElementById('btn-reset').onclick = () => { 
+        if (confirm('Resetar TUDO (fila + histórico)?')) reset(); 
+      };
+      
+      document.getElementById('speed-slider').onchange = (e) => {
+        const value = parseInt(e.target.value);
+        opts.delayMs = value;
+        document.getElementById('speed-value').textContent = value + 'ms';
+      };
+
+      enableDrag(panel, document.getElementById('__dl-header'));
+      
+      // Verificar se aviso foi fechado antes
+      if (localStorage.getItem('__dl-warning-closed-hacker') === 'true') {
+        document.getElementById('__dl-warning').classList.add('hidden');
+      }
+      
+      // Aplicar tema salvo
+      const savedTheme = localStorage.getItem('__dl-theme-hacker') || 'dark';
+      if (savedTheme === 'light') {
+        panel.classList.add('light-mode');
+        document.getElementById('__dl-theme-toggle').textContent = '☀️';
+      } else {
+        document.getElementById('__dl-theme-toggle').textContent = '🌙';
+      }
+
+      createItemsModal();
+
+      updateUI();
+    };
+
+    // ============================================
+    // ARRASTAR PAINEL
+    // ============================================
+    const enableDrag = (panel, handle) => {
+      if (!panel || !handle) return;
+
+      const dragState = { active: false, offsetX: 0, offsetY: 0 };
+
+      const onMove = e => {
+        if (!dragState.active) return;
+        const x = e.clientX - dragState.offsetX;
+        const y = e.clientY - dragState.offsetY;
+        panel.style.right = '';
+        panel.style.left = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, x)) + 'px';
+        panel.style.top = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, y)) + 'px';
+      };
+
+      const onUp = () => {
+        dragState.active = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      handle.addEventListener('mousedown', e => {
+        dragState.active = true;
+        dragState.offsetX = e.clientX - panel.getBoundingClientRect().left;
+        dragState.offsetY = e.clientY - panel.getBoundingClientRect().top;
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    };
+
+    // ============================================
+    // ATUALIZAR PAINEL
+    // ============================================
+    const updateUI = () => {
+      const panel = document.getElementById('__dl-panel');
+      if (!panel) return;
+
+      document.getElementById('stat-queue').textContent = state.queue.length;
+      document.getElementById('stat-active').textContent = runningSet.size;
+      document.getElementById('stat-processed').textContent = state.processed.length;
+      document.getElementById('stat-selected').textContent = state.selectedKeys.size;
+      document.getElementById('stat-errors').textContent = state.errors.length;
+
+      const total = state.processed.length + state.queue.length + runningSet.size;
+      const percent = total > 0 ? Math.round((state.processed.length / total) * 100) : 0;
+      const progressFill = document.getElementById('__dl-progress-fill');
+      progressFill.style.width = percent + '%';
+      document.getElementById('__dl-progress-text').textContent = percent + '%';
+      
+      // Atualizar porcentagem e tempo estimado
+      const percentEl = document.getElementById('progress-percent');
+      const timeEl = document.getElementById('progress-time');
+      if (percentEl) percentEl.textContent = percent + '%';
+      if (timeEl) {
+        const estimatedSeconds = getEstimatedTime();
+        if (estimatedSeconds && state.running) {
+          timeEl.textContent = '⏱️ ' + formatTime(estimatedSeconds);
+        } else if (state.running) {
+          timeEl.textContent = '⏱️ calculando...';
+        } else {
+          timeEl.textContent = '--:--';
+        }
+      }
+
+      document.getElementById('btn-start').disabled = state.running || state.queue.length === 0;
+      document.getElementById('btn-stop').disabled = !state.running;
+      document.getElementById('btn-scan').disabled = state.running;
+
+      const modalBtn = document.getElementById('btn-open-items-modal');
+      if (modalBtn) modalBtn.disabled = false;
+
+      const expandBtn = document.getElementById('btn-expand-table');
+      if (expandBtn) {
+        expandBtn.disabled = state.running || state.expandingTable;
+        expandBtn.textContent = state.expandingTable ? '[...] Expandindo...' : '[⇵] Tabela+Páginas';
+      }
+
+      const openIframesBtn = document.getElementById('btn-open-iframes');
+      if (openIframesBtn) {
+        const totalBlocked = state.blockedFrames.filter(src => src && src !== '(iframe sem src)').length;
+        openIframesBtn.disabled = totalBlocked === 0;
+        openIframesBtn.textContent = totalBlocked > 0 ? `[↗] Abrir Iframe(s) (${totalBlocked})` : '[↗] Abrir Iframe(s)';
+      }
+
+      const listSummary = document.getElementById('__dl-list-summary');
+      if (listSummary) {
+        listSummary.textContent = `Fila atual: ${state.queue.length} item(ns) | Selecionados: ${state.selectedKeys.size}. Abra [📋] Itens e Filtros para gerenciar.`;
+      }
+
+      renderItemsModalList();
+    };
+
+    // ============================================
+    // INICIALIZAÇÃO
+    // ============================================
+    console.clear();
+    console.log('%c👾 BAIXATRON HACKER v3.2 ATIVADO 📡', 'color: #00ff00; font-size: 14px; font-weight: bold');
+    console.log('%cSistema de invasao de downloads pronto para execucao!', 'color: #666; font-size: 12px');
+    console.log('%cComandos disponíveis: __dl.scan(), __dl.expandTable(), __dl.openBlockedFrames(), __dl.start(), __dl.stop(), __dl.reset()', 'color: #666; font-size: 11px');
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', createPanel);
+    } else {
+      createPanel();
+    }
+
+  })();
