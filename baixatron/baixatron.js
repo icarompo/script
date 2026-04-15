@@ -1,7 +1,7 @@
   // ==UserScript==
   // @name         BAIXATRON - Auto Downloader Universal
   // @namespace    https://github.com/HelloKiw1
-  // @version      3.0
+  // @version      3.1
   // @description  👾 O Alien que invade downloads! 📡 - Painel visual para download automático de arquivos
   // @author       HelloKiw1
   // @match        *://*/*
@@ -11,7 +11,7 @@
   // ==/UserScript==
 
   /**
-   * BAIXATRON - AUTO-DOWNLOADER UNIVERSAL v3.0 COM PAINEL VISUAL
+  * BAIXATRON - AUTO-DOWNLOADER UNIVERSAL v3.1 COM PAINEL VISUAL
    * 
    * 👾 O Alien que invade downloads! 📡
    * 
@@ -47,6 +47,9 @@
       waitForDownloadTimeout: 3000,
       concurrency: 1,
       maxRetries: 1,
+      tableExpandWaitMs: 900,
+      tableExpandMaxClicks: 12,
+      tableSweepMaxPages: 25,
       rootSelector: null,
       autoDetectIframe: true,
       maxClicks: Infinity,
@@ -59,12 +62,29 @@
     // ============================================
     const exts = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|odt|ods|txt|csv|rtf)$/i;
     const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const toAbs = href => { 
-      try { 
-        return new URL(href, document.baseURI).href; 
-      } catch { 
-        return ''; 
-      } 
+    const normLoose = s => {
+      const base = norm(s || '');
+      try {
+        return base.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      } catch {
+        return base;
+      }
+    };
+
+    const parseNameFilterTerms = raw => (raw || '')
+      .split(/[\n,;|]+/)
+      .map(term => term.trim())
+      .filter(Boolean);
+
+    const toAbs = href => {
+      if (!href || typeof href !== 'string') return '';
+      const cleaned = href.trim();
+      if (!cleaned || cleaned === '#' || /^javascript:/i.test(cleaned)) return '';
+      try {
+        return new URL(cleaned, document.baseURI).href;
+      } catch {
+        return '';
+      }
     };
     
     const hash = s => { 
@@ -73,34 +93,156 @@
       return (h >>> 0).toString(36); 
     };
 
-    const isVisible = el => {
-      const s = getComputedStyle(el);
-      if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+    const sanitizeFileName = (name, defaultExt = 'pdf') => {
+      const base = (name || '')
+        .replace(/[\\/:*?"<>|]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!base) return `download.${defaultExt}`;
+
+      // Se ja tem extensao, respeita.
+      if (/\.[a-z0-9]{2,5}$/i.test(base)) return base;
+      return `${base}.${defaultExt}`;
+    };
+
+    const fileNameFromContentDisposition = headerValue => {
+      if (!headerValue) return '';
+      const starMatch = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+      if (starMatch && starMatch[1]) {
+        try {
+          return decodeURIComponent(starMatch[1].trim().replace(/^"|"$/g, ''));
+        } catch {
+          return starMatch[1].trim().replace(/^"|"$/g, '');
+        }
+      }
+      const match = headerValue.match(/filename=([^;]+)/i);
+      return match ? match[1].trim().replace(/^"|"$/g, '') : '';
+    };
+
+    const fileNameFromUrl = url => {
+      if (!url) return '';
+
       try {
-        const r = el.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0 && (s.display === 'none' || s.visibility === 'hidden')) return false;
-      } catch {}
+        const parsed = new URL(url, document.baseURI);
+        const fromQuery =
+          parsed.searchParams.get('filename') ||
+          parsed.searchParams.get('file') ||
+          parsed.searchParams.get('name');
+
+        if (fromQuery) return decodeURIComponent(fromQuery.trim());
+
+        const segment = (parsed.pathname.split('/').pop() || '').trim();
+        if (!segment) return '';
+        return decodeURIComponent(segment);
+      } catch {
+        return '';
+      }
+    };
+
+    const blobLooksLikeHtml = async blob => {
+      if (!blob || blob.size === 0) return false;
+
+      try {
+        const head = (await blob.slice(0, 512).text()).trim().toLowerCase();
+        return (
+          head.startsWith('<!doctype html') ||
+          head.startsWith('<html') ||
+          head.includes('<head') ||
+          head.includes('<body')
+        );
+      } catch {
+        return false;
+      }
+    };
+
+    const isVisible = el => {
+      if (!el || !el.isConnected) return false;
+
+      try {
+        // Ignora elementos não renderizados (inclusive quando o pai está com display:none).
+        if (el.getClientRects().length === 0) return false;
+      } catch {
+        return false;
+      }
+
+      let cur = el;
+      while (cur && cur.nodeType === 1) {
+        const s = getComputedStyle(cur);
+        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+        cur = cur.parentElement;
+      }
+
       return true;
     };
 
+    const downloadIconSignatures = [
+      'M216 0h80c13.3 0 24 10.7 24 24v168',
+      'M387.66 192H332V48'
+    ];
+
+    const viewIconSignatures = [
+      'M572.52 241.4C518.29 135.59 410.93 64 288 64'
+    ];
+
+    const hasIconPath = (el, signatures) => {
+      const svgPaths = Array.from(el.querySelectorAll('svg path'));
+      return svgPaths.some(path => {
+        const d = path.getAttribute('d') || '';
+        return signatures.some(sig => d.includes(sig));
+      });
+    };
+
+    const hasDownloadIcon = el => {
+      const classText = norm(el.className || '');
+      if (/(fa-download|ri-download|icon-download|btn-download|download-btn|download-icon)/i.test(classText)) {
+        return true;
+      }
+
+      return hasIconPath(el, downloadIconSignatures);
+    };
+
+    const hasViewIcon = el => hasIconPath(el, viewIconSignatures);
+
     const looksLikeDownload = el => {
-      const text = norm(el.innerText);
+      const text = norm(
+        [
+          el.innerText,
+          el.textContent,
+          el.getAttribute('aria-label'),
+          el.getAttribute('title'),
+          el.dataset?.tooltip,
+          el.dataset?.title
+        ].filter(Boolean).join(' ')
+      );
       const cls = norm(el.className);
       const hrefAttr = el.getAttribute('href') || el.dataset.href || el.dataset.url || el.dataset.file || '';
       const hrefAbs = toAbs(hrefAttr);
       const onclick = el.getAttribute('onclick') || '';
+      const isButton = el.tagName === 'BUTTON' || el.getAttribute('role') === 'button';
+      const iconOnlyButton = isButton && !text;
+      const iconDownload = hasDownloadIcon(el);
+      const iconView = hasViewIcon(el);
 
       const uiKeywords = /fechar|aplicar|cancelar|limpar|remover|ir para|visualizar|adicionar|campo|página|paginação/i;
       if (uiKeywords.test(text)) return false;
 
+      if (iconView && !iconDownload) return false;
+
+      if (iconOnlyButton) {
+        return iconDownload;
+      }
+
       return (
+        iconDownload ||
         el.hasAttribute('download') ||
-        /download|baixar|baixe|\.pdf/i.test(text) ||
-        /scgridfieldoddlink|scgridfieldoddlink|css_arquivo_documento/i.test(cls) ||
+        /download|baixar|baixe|arquivo|anexo|\.pdf/i.test(text) ||
+        /scgridfieldoddlink|scgridfieldevenlink|css_arquivo_documento|download|arquivo|anexo/i.test(cls) ||
         exts.test(hrefAttr) || exts.test(hrefAbs) ||
-        /nm_mostra_doc/i.test(hrefAttr) ||
+        /nm_mostra_doc|arquivo|anexo|download/i.test(hrefAttr) ||
         /wpdm-download|download-file/i.test(hrefAttr) ||
-        /wpdm-download-button/i.test(cls)
+        /wpdm-download-button/i.test(cls) ||
+        /download|baixar|nm_mostra_doc/i.test(onclick)
       );
     };
 
@@ -109,11 +251,103 @@
       el.parentElement || 
       el;
 
-    const keyOf = (el, idx) => {
-      const href = toAbs(el.getAttribute('href') || el.dataset.href || el.dataset.url || el.dataset.file || '');
+    const getRecordTitle = el => {
+      // Caso tabela desktop: pega titulo da primeira coluna da linha.
+      const row = el.closest('tr');
+      if (row) {
+        const firstCell = row.querySelector('td[title], th[title], td, th');
+        if (firstCell) {
+          const fromTitle = (firstCell.getAttribute('title') || '').trim();
+          if (fromTitle) return fromTitle;
+          const fromText = (firstCell.textContent || '').trim();
+          if (fromText) return fromText;
+        }
+      }
+
+      // Caso card mobile: tenta localizar campo "Titulo:".
+      const card = el.closest('div');
+      if (card) {
+        const spans = Array.from(card.querySelectorAll('span'));
+        const titleLabel = spans.find(s => /t[ií]tulo\s*:/i.test((s.textContent || '').trim()));
+        if (titleLabel && titleLabel.nextElementSibling) {
+          const titleValue = (titleLabel.nextElementSibling.textContent || '').trim();
+          if (titleValue) return titleValue;
+        }
+      }
+
+      return '';
+    };
+
+    const extractDownloadUrl = el => {
+      if (!el) return '';
+
+      const direct = [
+        el.getAttribute('href'),
+        el.dataset?.downloadurl,
+        el.dataset?.href,
+        el.dataset?.url,
+        el.dataset?.file,
+        el.getAttribute('data-downloadurl'),
+        el.getAttribute('data-href'),
+        el.getAttribute('data-url'),
+        el.getAttribute('data-file')
+      ];
+
+      for (const raw of direct) {
+        const abs = toAbs(raw || '');
+        if (abs) return abs;
+      }
+
+      const cont = getContainer(el);
+      if (!cont || !cont.querySelectorAll) return '';
+
+      const nearby = Array.from(cont.querySelectorAll('a[href], [data-href], [data-url], [data-file]'));
+      for (const node of nearby) {
+        const raw =
+          node.getAttribute('href') ||
+          node.dataset?.downloadurl ||
+          node.dataset?.href ||
+          node.dataset?.url ||
+          node.dataset?.file ||
+          node.getAttribute('data-downloadurl') ||
+          node.getAttribute('data-href') ||
+          node.getAttribute('data-url') ||
+          node.getAttribute('data-file') ||
+          '';
+
+        const abs = toAbs(raw);
+        if (!abs) continue;
+
+        const hint = norm([
+          raw,
+          node.className,
+          node.getAttribute('onclick'),
+          node.getAttribute('title'),
+          node.getAttribute('aria-label')
+        ].filter(Boolean).join(' '));
+
+        if (
+          exts.test(raw) || exts.test(abs) ||
+          /download|baixar|nm_mostra_doc|arquivo|anexo|wpdm-download/i.test(hint)
+        ) {
+          return abs;
+        }
+      }
+
+      return '';
+    };
+
+    const keyOf = (el, idx, fallbackText = '', resolvedUrl = '') => {
+      const href = resolvedUrl || extractDownloadUrl(el);
       
       if (el.dataset && el.dataset.package) return `pkg:${el.dataset.package}`;
       if (el.dataset && el.dataset.id) return `id:${el.dataset.id}`;
+      if (el.getAttribute('data-id')) return `did:${el.getAttribute('data-id')}`;
+
+      const onclick = (el.getAttribute('onclick') || '').replace(/\s+/g, ' ').trim();
+      if (onclick && /download|baixar|nm_mostra_doc|arquivo|anexo/i.test(onclick)) {
+        return 'oc:' + hash(onclick.slice(0, 300));
+      }
       
       // Se tem URL válida e única, usar ela como chave principal
       if (href && href !== document.baseURI && href.length > 10) {
@@ -124,11 +358,11 @@
       const contId = cont.getAttribute('id') || cont.getAttribute('data-id') || cont.getAttribute('data-package-id');
       if (contId) return 'cont:' + contId;
       
-      const btnText = norm(el.innerText || el.textContent || '').slice(0, 100);
+      const btnText = norm(el.innerText || el.textContent || fallbackText || '').slice(0, 100);
       const contText = norm(cont.innerText || '').slice(0, 200);
       const combined = btnText + '|' + contText;
       
-      return 'txt:' + hash(combined) + ':idx:' + idx;
+      return 'txt:' + hash(combined);
     };
 
     // ============================================
@@ -146,7 +380,9 @@
       'a.wpdm-download-button, a.wpdm-download-link',
       'a.elementor-button, a.elementor-button-link',
       'a.nt_btn',
-      '[data-download], [data-file]'
+      '[data-download], [data-file]',
+      'button',
+      '[role="button"]'
     ].join(',');
 
     // ============================================
@@ -156,6 +392,8 @@
       queue: [],
       processed: [],
       running: false,
+      expandingTable: false,
+      blockedFrames: [],
       timer: null,
       startedAt: null,
       errors: [],
@@ -191,33 +429,12 @@
     // ============================================
     // COLETA DE LINKS
     // ============================================
-    const collect = () => {
-      let root = opts.rootSelector ? document.querySelector(opts.rootSelector) : document;
+    const collectFromRoot = root => {
+      if (!root || !root.querySelectorAll) return [];
 
-      if (opts.autoDetectIframe && !opts.rootSelector) {
-        const iframeSelectors = [
-          '#nmsc_iframe_pesq_publicacoes_grid',
-          'iframe[name*="grid"]',
-          'iframe[name*="resultado"]',
-          'iframe[id*="resultado"]',
-          'iframe[src*="publicacoes"]',
-          'iframe[src*="documentos"]'
-        ];
-        
-        for (const selector of iframeSelectors) {
-          const foundIframe = document.querySelector(selector);
-          if (foundIframe && foundIframe.contentWindow && foundIframe.contentWindow.document) {
-            root = foundIframe.contentWindow.document;
-            break;
-          }
-        }
-      }
+      const pageHint = getCurrentPageNumber();
 
-      if (!root) { 
-        return []; 
-      }
-
-      const all = Array.from(root.querySelectorAll(selectors))
+      return Array.from(root.querySelectorAll(selectors))
         .filter(el => {
           const tag = el.tagName;
           const isBtn = tag === 'A' || tag === 'BUTTON' || el.getAttribute('role') === 'button';
@@ -226,36 +443,599 @@
           return isBtn && visible && download;
         })
         .map((el, idx) => {
-          const url = toAbs(el.getAttribute('href') || el.dataset.href || el.dataset.url || el.dataset.file || '');
-          const text = (el.innerText || '').trim().slice(0, 120);
-          const key = keyOf(el, idx);
-          return { el, url, text, key, idx };
+          const url = extractDownloadUrl(el);
+          const titleName = getRecordTitle(el);
+          const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || titleName || '').trim().slice(0, 120);
+          const key = keyOf(el, idx, titleName, url);
+          return { el, url, text, titleName, key, idx, sourcePage: pageHint };
         });
+    };
+
+    const collect = (logEnabled = true) => {
+      let roots = [];
+      const blockedFrames = [];
+
+      if (opts.rootSelector) {
+        const root = document.querySelector(opts.rootSelector);
+        if (root) roots.push(root);
+      } else {
+        roots.push(document);
+
+        if (opts.autoDetectIframe) {
+          const frames = Array.from(document.querySelectorAll('iframe'));
+          for (const frame of frames) {
+            try {
+              const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+              if (frameDoc) roots.push(frameDoc);
+            } catch {
+              const rawSrc = frame.getAttribute('src') || frame.src || '';
+              const normalized = toAbs(rawSrc) || rawSrc || '(iframe sem src)';
+              blockedFrames.push(normalized);
+            }
+          }
+        }
+      }
+
+      state.blockedFrames = Array.from(new Set(blockedFrames)).filter(Boolean);
+
+      if (!roots.length) return [];
+
+      const all = roots.flatMap(root => collectFromRoot(root));
 
       const map = new Map();
       for (const it of all) if (!map.has(it.key)) map.set(it.key, it);
 
-      console.log('[BAIXATRON] 🔍 Collect: elementos brutos:', all.length, '| únicos após dedupe:', map.size);
+      if (opts.verbose && blockedFrames.length && logEnabled) {
+        console.warn('[BAIXATRON] ⚠️ Iframes com acesso bloqueado (cross-origin):', blockedFrames.length);
+        if (map.size === 0) {
+          console.warn('[BAIXATRON] 💡 Dica: abra o iframe em nova aba (domínio do conteúdo) para escanear os botões de download.');
+          console.warn('[BAIXATRON] 💡 Atalho: use __dl.openBlockedFrames() ou botão [↗] Abrir Iframe(s).');
+        }
+      }
+
+      if (logEnabled) {
+        console.log('[BAIXATRON] 🔍 Collect: elementos brutos:', all.length, '| únicos após dedupe:', map.size);
+      }
       return Array.from(map.values());
     };
 
-    // ============================================
-    // SCAN: Lista todos os downloads
-    // ============================================
-    const scan = () => {
-      const items = collect();
-      console.log('[BAIXATRON] 📊 Coleta: encontrados', items.length, 'botões únicos');
-      
+    const isControlDisabled = el => {
+      if (!el) return true;
+      if (el.disabled) return true;
+      const ariaDisabled = (el.getAttribute('aria-disabled') || '').toLowerCase();
+      if (ariaDisabled === 'true') return true;
+      const cls = norm(el.className || '');
+      return /\b(disabled|is-disabled|btn-disabled)\b/.test(cls);
+    };
+
+    const dispatchFormEvents = el => {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const parseNumberish = value => {
+      const raw = String(value || '').replace(/\./g, '');
+      const match = raw.match(/-?\d+/);
+      if (!match) return NaN;
+      return parseInt(match[0], 10);
+    };
+
+    const getControlContextText = el => {
+      const text = [
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.id,
+        el.name,
+        el.className,
+        el.closest('label')?.textContent,
+        el.parentElement?.textContent
+      ].filter(Boolean).join(' ');
+      return norm(text);
+    };
+
+    const getCleanOptionNumber = opt => {
+      if (!opt) return NaN;
+
+      const valueText = String(opt.value || '').trim();
+      const labelText = String(opt.textContent || '').trim();
+
+      if (/^\d{1,4}$/.test(valueText)) return parseInt(valueText, 10);
+      if (/^\d{1,4}$/.test(labelText)) return parseInt(labelText, 10);
+
+      return NaN;
+    };
+
+    const looksLikeRowsPerPageSelect = select => {
+      const options = Array.from(select.options || []);
+      if (options.length < 2) return false;
+
+      const contextText = getControlContextText(select);
+      const hasRowsContext = /por p[aá]gina|itens por|registros por|linhas por|results per page|rows per page|page size|per page|page length|tamanho da p[aá]gina/i.test(contextText);
+      if (hasRowsContext) {
+        return true;
+      }
+
+      const hasUuidLikeValue = options.some(opt => /^[a-f0-9]{8}-[a-f0-9]{4}-/i.test(String(opt.value || '').trim()));
+      if (hasUuidLikeValue) return false;
+
+      const numericOptions = options
+        .map(getCleanOptionNumber)
+        .filter(n => Number.isFinite(n) && n > 0);
+
+      if (numericOptions.length < 2) return false;
+
+      const min = Math.min(...numericOptions);
+      const max = Math.max(...numericOptions);
+      const hasLikelyPageSize = numericOptions.some(n => [10, 20, 25, 50, 100].includes(n));
+
+      // Evita confundir com seletor de página (1,2,3...) ou filtros diversos.
+      return min >= 5 && max <= 500 && (hasLikelyPageSize || (max >= 20 && max / min >= 2));
+    };
+
+    const pickBestRowsPerPageOption = select => {
+      const options = Array.from(select.options || []);
+      if (options.length === 0) return null;
+
+      const allOption = options.find(opt => {
+        const valueText = (opt.value || '').trim();
+        const labelText = opt.textContent || '';
+        return valueText === '-1' || /\b(all|todos?|todas?|tudo)\b/i.test(labelText);
+      });
+      if (allOption) return allOption;
+
+      let best = null;
+      let bestNumber = -Infinity;
+
+      for (const opt of options) {
+        const numberValue = getCleanOptionNumber(opt);
+        if (!Number.isFinite(numberValue)) continue;
+        if (numberValue > bestNumber) {
+          bestNumber = numberValue;
+          best = opt;
+        }
+      }
+
+      return best;
+    };
+
+    const expandRowsPerPage = async () => {
+      let changed = 0;
+
+      const selects = Array.from(document.querySelectorAll('select'))
+        .filter(select => !select.closest('#__dl-panel'))
+        .filter(select => isVisible(select) && !isControlDisabled(select))
+        .filter(select => looksLikeRowsPerPageSelect(select));
+
+      for (const select of selects) {
+        const targetOption = pickBestRowsPerPageOption(select);
+        if (!targetOption) continue;
+
+        const nextValue = targetOption.value;
+        const currentValue = select.value;
+        if (nextValue === currentValue && targetOption.selected) continue;
+
+        select.value = nextValue;
+        targetOption.selected = true;
+        dispatchFormEvents(select);
+        changed++;
+      }
+
+      if (changed > 0) {
+        await wait(Math.max(250, opts.tableExpandWaitMs));
+      }
+
+      return changed;
+    };
+
+    const getCollectSignature = () => collect(false).map(it => it.key).join('|');
+
+    const getPaginationContainers = () => {
+      const selectors = [
+        'nav',
+        'ul',
+        'ol',
+        '[class*="pagination" i]',
+        '[class*="pagin" i]',
+        '[class*="pager" i]',
+        '[aria-label*="pagin" i]',
+        '[aria-label*="page" i]'
+      ].join(',');
+
+      return Array.from(document.querySelectorAll(selectors))
+        .filter(el => !el.closest('#__dl-panel'))
+        .filter(el => isVisible(el));
+    };
+
+    const getPaginationControls = container => {
+      if (!container || !container.querySelectorAll) return [];
+
+      return Array.from(container.querySelectorAll('button, a, [role="button"]'))
+        .filter(el => isVisible(el) && !isControlDisabled(el))
+        .filter(el => !looksLikeDownload(el));
+    };
+
+    const getControlText = el => norm([
+      el.innerText,
+      el.textContent,
+      el.getAttribute('aria-label'),
+      el.getAttribute('title'),
+      el.getAttribute('rel')
+    ].filter(Boolean).join(' '));
+
+    const getClassText = el => {
+      if (!el) return '';
+      if (typeof el.className === 'string') return norm(el.className);
+      return norm(el.getAttribute('class') || '');
+    };
+
+    const getControlPageNumber = el => {
+      const directText = (el.innerText || el.textContent || '').trim();
+      if (/^\d{1,4}$/.test(directText)) {
+        return parseInt(directText, 10);
+      }
+
+      const attrText = [
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.getAttribute('data-page'),
+        el.getAttribute('data-pagenumber')
+      ].filter(Boolean).join(' ');
+
+      const match = attrText.match(/\b(\d{1,4})\b/);
+      return match ? parseInt(match[1], 10) : NaN;
+    };
+
+    const isCurrentPageControl = el => {
+      const ariaCurrent = (el.getAttribute('aria-current') || '').toLowerCase();
+      if (ariaCurrent === 'page' || ariaCurrent === 'true') return true;
+
+      const ownClass = getClassText(el);
+      if (/\b(active|current|selected|is-active|page-active)\b/.test(ownClass)) return true;
+
+      const parent = el.parentElement;
+      if (!parent) return false;
+
+      const parentAriaCurrent = (parent.getAttribute('aria-current') || '').toLowerCase();
+      if (parentAriaCurrent === 'page' || parentAriaCurrent === 'true') return true;
+
+      const parentClass = getClassText(parent);
+      return /\b(active|current|selected|is-active|page-active)\b/.test(parentClass);
+    };
+
+    const getControlMarker = el => {
+      const page = getControlPageNumber(el);
+      if (Number.isFinite(page)) return `page:${page}`;
+
+      const parent = el.parentElement;
+      const pos = parent ? Array.from(parent.children).indexOf(el) : -1;
+      const text = getControlText(el) || getClassText(el) || 'icon-control';
+      return `ctrl:${text.slice(0, 80)}:${pos}`;
+    };
+
+    const getPaginationStateMarker = () => {
+      const containers = getPaginationContainers();
+      const markers = [];
+
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        if (controls.length < 2) continue;
+
+        const active = controls.find(isCurrentPageControl);
+        if (active) {
+          markers.push(getControlMarker(active));
+        }
+      }
+
+      return markers.join('|');
+    };
+
+    const getCurrentPageNumber = () => {
+      const containers = getPaginationContainers();
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        if (controls.length < 2) continue;
+
+        const active = controls.find(isCurrentPageControl);
+        if (!active) continue;
+
+        const page = getControlPageNumber(active);
+        if (Number.isFinite(page)) return page;
+      }
+
+      return NaN;
+    };
+
+    const findPaginationControlByPage = pageNumber => {
+      if (!Number.isFinite(pageNumber)) return null;
+
+      const containers = getPaginationContainers();
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        const match = controls.find(control => getControlPageNumber(control) === pageNumber);
+        if (match) return match;
+      }
+
+      return null;
+    };
+
+    const goToPageNumber = async pageNumber => {
+      if (!Number.isFinite(pageNumber)) return false;
+
+      const currentPage = getCurrentPageNumber();
+      if (Number.isFinite(currentPage) && currentPage === pageNumber) return true;
+
+      const control = findPaginationControlByPage(pageNumber);
+      if (!control) return false;
+
+      const beforeSig = getCollectSignature();
+      const beforePageMarker = getPaginationStateMarker();
+
+      if (typeof control.click === 'function') {
+        control.click();
+      } else {
+        control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      }
+
+      const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforePageMarker);
+      if (changed) {
+        await waitForCollectSettled(opts.tableExpandWaitMs * 6);
+      }
+
+      const afterPage = getCurrentPageNumber();
+      return Number.isFinite(afterPage) && afterPage === pageNumber;
+    };
+
+    const waitForCollectChange = async (previousSignature, timeoutMs, previousPageMarker = '') => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        await wait(250);
+        const nextSignature = getCollectSignature();
+        if (nextSignature !== previousSignature) return true;
+
+        if (previousPageMarker) {
+          const nextPageMarker = getPaginationStateMarker();
+          if (nextPageMarker !== previousPageMarker) return true;
+        }
+      }
+      return false;
+    };
+
+    const waitForCollectSettled = async timeoutMs => {
+      const startedAt = Date.now();
+      let lastSignature = '';
+      let stableHits = 0;
+      let lastItems = [];
+
+      while (Date.now() - startedAt < timeoutMs) {
+        await wait(250);
+        const items = collect(false);
+        const signature = items.map(it => it.key).join('|');
+
+        if (signature === lastSignature) {
+          stableHits++;
+        } else {
+          stableHits = 0;
+          lastSignature = signature;
+        }
+
+        lastItems = items;
+
+        // Considera assentado quando houver itens e duas leituras seguidas iguais.
+        if (items.length > 0 && stableHits >= 1) {
+          return items;
+        }
+      }
+
+      return lastItems;
+    };
+
+    const clickLoadMoreControls = async () => {
+      const loadMoreRegex = /mostrar mais|carregar mais|ver mais|mais resultados|mais itens|exibir mais|load more|show more|see more/i;
+      let clicks = 0;
+
+      while (clicks < opts.tableExpandMaxClicks) {
+        const candidates = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+          .filter(el => !el.closest('#__dl-panel'))
+          .filter(el => isVisible(el) && !isControlDisabled(el))
+          .filter(el => !looksLikeDownload(el))
+          .filter(el => {
+            const text = norm([
+              el.innerText,
+              el.textContent,
+              el.getAttribute('aria-label'),
+              el.getAttribute('title')
+            ].filter(Boolean).join(' '));
+            return loadMoreRegex.test(text);
+          });
+
+        if (candidates.length === 0) break;
+
+        const target = candidates[0];
+        const beforeSig = getCollectSignature();
+
+        if (typeof target.click === 'function') {
+          target.click();
+        } else {
+          target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+
+        clicks++;
+        const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 4);
+        if (!changed) break;
+      }
+
+      return clicks;
+    };
+
+    const findNextPaginationControl = (clickedMarkers = new Set()) => {
+      const nextRegex = /(pr[oó]xim[ao]?|next|seguinte|avan[cç]ar|pr[oó]x\b|[»›→])/i;
+      const prevRegex = /(anterior|prev(?:ious)?|voltar|[«‹←])/i;
+      const nextClassRegex = /(next|chevron-right|angle-right|arrow-right|caret-right|icon-right|ri-arrow-right|fa-angle-right|fa-chevron-right|bi-chevron-right|pagination-next)/i;
+      const prevClassRegex = /(prev|previous|chevron-left|angle-left|arrow-left|caret-left|icon-left|ri-arrow-left|fa-angle-left|fa-chevron-left|bi-chevron-left|pagination-prev)/i;
+
+      const pickFromControls = controls => {
+        if (!controls || controls.length === 0) return null;
+
+        const activeIndex = controls.findIndex(isCurrentPageControl);
+        const currentPage = activeIndex >= 0 ? getControlPageNumber(controls[activeIndex]) : NaN;
+
+        const numericControls = controls
+          .map(el => ({ el, page: getControlPageNumber(el) }))
+          .filter(entry => Number.isFinite(entry.page));
+
+        const sortedNumeric = numericControls
+          .slice()
+          .sort((a, b) => a.page - b.page);
+
+        if (Number.isFinite(currentPage)) {
+          const nextNumeric = sortedNumeric
+            .filter(entry => entry.page > currentPage)
+            .map(entry => entry.el)
+            .find(el => !clickedMarkers.has(getControlMarker(el)));
+
+          if (nextNumeric) return nextNumeric;
+        } else if (sortedNumeric.length > 0) {
+          // Se não identificou página ativa, evita clicar na menor (geralmente página 1).
+          const guessNext = sortedNumeric
+            .filter(entry => entry.page > 1)
+            .map(entry => entry.el)
+            .find(el => !clickedMarkers.has(getControlMarker(el)));
+
+          if (guessNext) return guessNext;
+
+          if (sortedNumeric.length > 1) {
+            const second = sortedNumeric[1].el;
+            if (!clickedMarkers.has(getControlMarker(second))) return second;
+          }
+        }
+
+        if (activeIndex >= 0) {
+          for (let i = activeIndex + 1; i < controls.length; i++) {
+            const candidate = controls[i];
+            if (isCurrentPageControl(candidate)) continue;
+
+            const text = getControlText(candidate);
+            const classText = getClassText(candidate);
+            if (prevRegex.test(text) || prevClassRegex.test(classText)) continue;
+            if (clickedMarkers.has(getControlMarker(candidate))) continue;
+
+            return candidate;
+          }
+        }
+
+        const nextByLabel = controls.find(candidate => {
+          const text = getControlText(candidate);
+          const classText = getClassText(candidate);
+          const rel = (candidate.getAttribute('rel') || '').toLowerCase();
+
+          if (prevRegex.test(text) || prevClassRegex.test(classText)) return false;
+
+          const looksLikeNext = nextRegex.test(text) || nextClassRegex.test(classText) || rel === 'next';
+          if (!looksLikeNext) return false;
+
+          return !clickedMarkers.has(getControlMarker(candidate));
+        });
+
+        if (nextByLabel) return nextByLabel;
+
+        const anyNumeric = numericControls
+          .map(entry => entry.el)
+          .find(el => !isCurrentPageControl(el) && !clickedMarkers.has(getControlMarker(el)));
+
+        return anyNumeric || null;
+      };
+
+      const containers = getPaginationContainers();
+      for (const container of containers) {
+        const controls = getPaginationControls(container);
+        if (controls.length < 2) continue;
+
+        const picked = pickFromControls(controls);
+        if (picked) return picked;
+      }
+
+      const controls = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+        .filter(el => !el.closest('#__dl-panel'))
+        .filter(el => isVisible(el) && !isControlDisabled(el))
+        .filter(el => !looksLikeDownload(el));
+      return pickFromControls(controls);
+    };
+
+    const collectThroughPagination = async () => {
+      const allItems = new Map();
+      const clickedMarkers = new Set();
+
+      const addCurrentPageItems = (items = null) => {
+        const currentPage = getCurrentPageNumber();
+        const source = items || collect(false);
+        for (const item of source) {
+          const enriched = {
+            ...item,
+            sourcePage: Number.isFinite(item.sourcePage)
+              ? item.sourcePage
+              : (Number.isFinite(currentPage) ? currentPage : NaN)
+          };
+
+          if (!allItems.has(item.key)) {
+            allItems.set(item.key, enriched);
+          }
+        }
+      };
+
+      addCurrentPageItems();
+
+      let movedPages = 0;
+      for (let i = 0; i < opts.tableSweepMaxPages; i++) {
+        let pageAdvanced = false;
+
+        // Tenta candidatos alternativos de paginação caso o primeiro não mude a lista.
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const nextControl = findNextPaginationControl(clickedMarkers);
+          if (!nextControl) break;
+
+          const beforeSig = getCollectSignature();
+          const beforePageMarker = getPaginationStateMarker();
+          const marker = getControlMarker(nextControl);
+
+          if (typeof nextControl.click === 'function') {
+            nextControl.click();
+          } else {
+            nextControl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          }
+          clickedMarkers.add(marker);
+
+          const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforePageMarker);
+          if (!changed) {
+            continue;
+          }
+
+          movedPages++;
+          const settledItems = await waitForCollectSettled(opts.tableExpandWaitMs * 6);
+          addCurrentPageItems(settledItems);
+          pageAdvanced = true;
+          break;
+        }
+
+        if (!pageAdvanced) break;
+      }
+
+      return {
+        items: Array.from(allItems.values()),
+        movedPages
+      };
+    };
+
+    const fillQueueFromItems = items => {
       state.queue = [];
       state.queuedKeys.clear();
       state.selectedKeys.clear();
+
       let added = 0;
       let skipped = 0;
-      
+
       for (const it of items) {
         if (opts.dedupe && state.doneKeys.has(it.key)) {
           skipped++;
-          console.log('[BAIXATRON] ⏭️ Pulando (já processado):', it.text?.slice(0, 40));
           continue;
         }
         state.queue.push(it);
@@ -264,8 +1044,144 @@
         added++;
       }
 
-      console.log('[BAIXATRON] ✅ Adicionados:', added, '| ⏭️ Pulados:', skipped, '| 📝 Total histórico:', state.doneKeys.size);
       updateUI();
+      return { added, skipped };
+    };
+
+    const applyQueueNameFilter = mode => {
+      if (state.running) {
+        alert('[BAIXATRON] Pause os downloads antes de aplicar filtros por nome.');
+        return;
+      }
+
+      if (state.queue.length === 0) {
+        alert('[BAIXATRON] A fila esta vazia. Use [⊙] Escanear primeiro.');
+        return;
+      }
+
+      const actionLabel = mode === 'keep' ? 'manter' : 'remover';
+      const raw = prompt(
+        `[BAIXATRON] Digite os nomes/trechos para ${actionLabel} da checklist.\n` +
+        'Separe por quebra de linha, virgula, ponto e virgula ou barra vertical.'
+      );
+
+      if (raw === null) return;
+
+      const terms = parseNameFilterTerms(raw);
+      if (!terms.length) {
+        alert('[BAIXATRON] Nenhum nome informado.');
+        return;
+      }
+
+      const totalBefore = state.queue.length;
+      const tokens = terms.map(normLoose).filter(Boolean);
+      const nextQueue = [];
+      let matched = 0;
+
+      for (const it of state.queue) {
+        const haystack = normLoose([it.titleName, it.text].filter(Boolean).join(' '));
+        const isMatch = tokens.some(token => haystack.includes(token));
+        if (isMatch) matched++;
+
+        const shouldKeep = mode === 'keep' ? isMatch : !isMatch;
+        if (shouldKeep) {
+          nextQueue.push(it);
+        } else {
+          state.selectedKeys.delete(it.key);
+        }
+      }
+
+      state.queue = nextQueue;
+      state.queuedKeys.clear();
+      for (const it of state.queue) {
+        state.queuedKeys.add(it.key);
+      }
+
+      const queueKeys = new Set(state.queue.map(it => it.key));
+      state.selectedKeys.forEach(key => {
+        if (!queueKeys.has(key)) state.selectedKeys.delete(key);
+      });
+
+      const totalAfter = nextQueue.length;
+      const removedCount = Math.max(0, totalBefore - totalAfter);
+
+      updateUI();
+
+      console.log(
+        '[BAIXATRON] 🧪 Filtro por nome aplicado | modo:', mode,
+        '| termos:', terms.length,
+        '| correspondencias:', matched,
+        '| removidos da fila:', removedCount,
+        '| restantes:', totalAfter
+      );
+
+      alert(
+        `[BAIXATRON] Filtro aplicado (${mode === 'keep' ? 'manter' : 'remover'}).\n` +
+        `Termos: ${terms.length}\n` +
+        `Correspondencias: ${matched}\n` +
+        `Removidos da checklist: ${removedCount}\n` +
+        `Restantes: ${totalAfter}`
+      );
+    };
+
+    const expandTable = async () => {
+      if (state.running || state.expandingTable) return [];
+
+      state.expandingTable = true;
+      updateUI();
+
+      try {
+        console.log('[BAIXATRON] 🧩 Tentando expandir tabela e paginação...');
+        const baselineItems = collect(false);
+
+        const changedSelects = await expandRowsPerPage();
+        const loadMoreClicks = await clickLoadMoreControls();
+        const pagedResult = await collectThroughPagination();
+
+        let finalItems = pagedResult.items.length ? pagedResult.items : collect(false);
+        if (finalItems.length === 0 && baselineItems.length > 0) {
+          console.warn('[BAIXATRON] ⚠️ Expansão zerou a coleta. Mantendo itens da coleta inicial para evitar perda de fila.');
+          finalItems = baselineItems;
+        }
+        const stats = fillQueueFromItems(finalItems);
+
+        console.log(
+          '[BAIXATRON] ✅ Expansão finalizada | itens:', finalItems.length,
+          '| selects alterados:', changedSelects,
+          '| cliques em "mais":', loadMoreClicks,
+          '| páginas percorridas:', pagedResult.movedPages,
+          '| adicionados:', stats.added,
+          '| pulados:', stats.skipped
+        );
+
+        if (finalItems.length === 0 && state.blockedFrames.length > 0) {
+          console.warn('[BAIXATRON] ⚠️ Nenhum item acessível nesta aba por causa de iframe cross-origin.');
+          console.warn('[BAIXATRON] 💡 Abra o conteúdo com __dl.openBlockedFrames() para escanear no domínio correto.');
+        }
+
+        return finalItems;
+      } catch (err) {
+        console.error('[BAIXATRON] ❌ Falha ao expandir tabela:', err);
+        return [];
+      } finally {
+        state.expandingTable = false;
+        updateUI();
+      }
+    };
+
+    // ============================================
+    // SCAN: Lista todos os downloads
+    // ============================================
+    const scan = () => {
+      const items = collect();
+      console.log('[BAIXATRON] 📊 Coleta: encontrados', items.length, 'botões únicos');
+
+      const { added, skipped } = fillQueueFromItems(items);
+
+      console.log('[BAIXATRON] ✅ Adicionados:', added, '| ⏭️ Pulados:', skipped, '| 📝 Total histórico:', state.doneKeys.size);
+      if (items.length === 0 && state.blockedFrames.length > 0) {
+        console.warn('[BAIXATRON] 💡 Esta página usa iframe cross-origin. Use __dl.openBlockedFrames() ou o botão [↗] Abrir Iframe(s).');
+      }
       return items;
     };
 
@@ -274,45 +1190,96 @@
     // ============================================
     const wait = ms => new Promise(r => setTimeout(r, ms));
 
+    const resolveLiveElementForItem = it => {
+      if (it?.el?.isConnected) return it.el;
+
+      const fresh = collect(false).find(candidate => {
+        if (candidate.key !== it.key) return false;
+
+        const sameTitle = norm(candidate.titleName || candidate.text) === norm(it.titleName || it.text);
+        if (sameTitle) return true;
+
+        return true;
+      });
+      return fresh?.el || null;
+    };
+
+    const ensureItemPageVisible = async it => {
+      const targetPage = it?.sourcePage;
+      if (!Number.isFinite(targetPage)) return;
+
+      const currentPage = getCurrentPageNumber();
+      if (Number.isFinite(currentPage) && currentPage === targetPage) return;
+
+      const moved = await goToPageNumber(targetPage);
+      if (!moved && opts.verbose) {
+        console.warn('[BAIXATRON] ⚠️ Não foi possível navegar para a página do item:', it?.text || it?.titleName, '| página esperada:', targetPage);
+      }
+    };
+
     const safeClick = async it => {
-      const el = it.el;
+      await ensureItemPageVisible(it);
+
+      const el = resolveLiveElementForItem(it) || it.el;
       const url = toAbs(it.url);
+      const titleFallback = (it.titleName || it.text || 'download').trim();
       
       try {
-        el.scrollIntoView({ block: 'center' });
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ block: 'center' });
+        }
       } catch {}
       
       await wait(100);
+
+      // Em botões com handler JS (sem href), dispare o clique diretamente.
+      if (!url) {
+        const liveEl = resolveLiveElementForItem(it) || el;
+        if (!liveEl || !liveEl.isConnected) {
+          throw new Error('Elemento sem URL não está no DOM atual (possível item de outra página).');
+        }
+
+        if (typeof liveEl.click === 'function') {
+          liveEl.click();
+        } else {
+          liveEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+        return;
+      }
       
       // Download direto via Fetch + Blob (melhor compatibilidade, sem abrir abas)
       try {
         // Fazer fetch do arquivo
-        const response = await fetch(url);
+        const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
         
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
+
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (/text\/html|application\/json|text\/plain/.test(contentType)) {
+          throw new Error(`Resposta não-binária (${contentType || 'sem content-type'})`);
+        }
         
         // Receber como octet-stream para forçar download (não abrir PDF)
         const blob = await response.blob();
+        if (await blobLooksLikeHtml(blob)) {
+          throw new Error('Resposta HTML recebida em vez de arquivo binário');
+        }
+
         const downloadBlob = new Blob([blob], { type: 'application/octet-stream' });
         const blobUrl = URL.createObjectURL(downloadBlob);
         
-        // Extrair nome do arquivo da URL ou usar texto do botão
-        let fileName = '';
-        if (url) {
-          const urlParts = url.split('/');
-          const lastPart = urlParts[urlParts.length - 1];
-          fileName = lastPart.split('?')[0].split('#')[0];
-        }
+        // Extrair nome por header/URL e, se faltar, usar titulo da linha.
+        let fileName = fileNameFromContentDisposition(response.headers.get('content-disposition'));
+        if (!fileName) fileName = fileNameFromUrl(response.url || url);
+        if (!fileName) fileName = fileNameFromUrl(url);
         
-        // Se não conseguiu nome válido, usar texto do botão
+        // Se não conseguiu nome válido, usar titulo/texto do registro escaneado.
         if (!fileName || fileName.length < 3) {
-          const cleanText = (it.text || 'download')
-            .replace(/[^a-z0-9]/gi, '_')
-            .substring(0, 50);
-          fileName = cleanText + '.pdf';
+          fileName = titleFallback;
         }
+        fileName = sanitizeFileName(fileName, 'pdf');
         
         // Criar elemento <a> com blob URL
         const a = document.createElement('a');
@@ -331,25 +1298,33 @@
         
       } catch (e) {
         console.warn('[BAIXATRON] ⚠️ Erro no Fetch, tentando fallback:', e.message);
+
+        // Fallback 1: prioriza clique no elemento original para fluxos JS (ex.: wpdm-download)
+        try {
+          const liveEl = resolveLiveElementForItem(it) || el;
+          if (!liveEl || !liveEl.isConnected) throw e;
+
+          if (typeof liveEl.click === 'function') {
+            liveEl.click();
+          } else {
+            liveEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          }
+          return;
+        } catch (e1) {
+          // segue para fallback por URL
+        }
         
-        // Fallback 1: tentar com URL direto (se mesmo domínio)
+        // Fallback 2: tentar com URL direto (se mesmo domínio)
         try {
           const a = document.createElement('a');
           a.href = url;
           
-          let fileName = '';
-          if (url) {
-            const urlParts = url.split('/');
-            const lastPart = urlParts[urlParts.length - 1];
-            fileName = lastPart.split('?')[0].split('#')[0];
-          }
+          let fileName = fileNameFromUrl(url);
           
           if (!fileName || fileName.length < 3) {
-            const cleanText = (it.text || 'download')
-              .replace(/[^a-z0-9]/gi, '_')
-              .substring(0, 50);
-            fileName = cleanText + '.pdf';
+            fileName = titleFallback;
           }
+          fileName = sanitizeFileName(fileName, 'pdf');
           
           a.download = fileName;
           a.style.display = 'none';
@@ -360,24 +1335,15 @@
           document.body.removeChild(a);
           
         } catch (e2) {
-          // Fallback 2: tentar click no elemento original
-          try {
-            if (typeof el.click === 'function') {
-              el.click();
-            } else {
-              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-            }
-          } catch (e3) {
-            // Fallback 3: abrir URL (último recurso)
-            if (url) {
-              try { 
-                window.open(url, '_blank'); 
-              } catch (e4) {
-                throw e;
-              }
-            } else {
+          // Fallback 3: abrir URL (último recurso)
+          if (url) {
+            try { 
+              window.open(url, '_blank'); 
+            } catch (e3) {
               throw e;
             }
+          } else {
+            throw e;
           }
         }
       }
@@ -492,6 +1458,7 @@
       state.queue = [];
       state.processed = [];
       state.errors = [];
+      state.expandingTable = false;
       state.doneKeys.clear();
       state.queuedKeys.clear();
       state.selectedKeys.clear();
@@ -551,6 +1518,33 @@
       }
     };
 
+    const openBlockedFrames = () => {
+      const frames = (state.blockedFrames || []).filter(src => src && src !== '(iframe sem src)');
+      if (!frames.length) {
+        console.warn('[BAIXATRON] Nenhum iframe bloqueado com URL disponível para abrir.');
+        return [];
+      }
+
+      const opened = [];
+      for (const src of frames) {
+        try {
+          const abs = toAbs(src) || src;
+          const win = window.open(abs, '_blank', 'noopener,noreferrer');
+          if (win) opened.push(abs);
+        } catch (err) {
+          console.warn('[BAIXATRON] Falha ao abrir iframe:', src, err?.message || err);
+        }
+      }
+
+      if (opened.length > 0) {
+        console.log('[BAIXATRON] ↗ Iframe(s) aberto(s):', opened.length);
+      } else {
+        console.warn('[BAIXATRON] O navegador bloqueou a abertura automática. Permita pop-ups e tente novamente.');
+      }
+
+      return opened;
+    };
+
     const getEstimatedTime = () => {
       if (!state.running || state.processed.length === 0) return null;
       
@@ -583,6 +1577,9 @@
 
     window.__dl = { 
       start, stop, reset, scan, clearHistory,
+      expandTable,
+      applyQueueNameFilter,
+      openBlockedFrames,
       selectAll, deselectAll, toggleSelect,
       setOptions, opts, state,
       toggleTheme
@@ -1186,10 +2183,14 @@
 
         <div id="__dl-controls">
           <button class="btn btn-primary" id="btn-scan">[⊙] Escanear</button>
+          <button class="btn btn-secondary" id="btn-expand-table">[⇵] Tabela+Páginas</button>
+          <button class="btn btn-secondary" id="btn-open-iframes">[↗] Abrir Iframe(s)</button>
           <button class="btn btn-primary" id="btn-start">[▶] Iniciar</button>
           <button class="btn btn-secondary" id="btn-stop" disabled>[⏸] Pausar</button>
           <button class="btn btn-secondary" id="btn-select-all">[+] Todos</button>
           <button class="btn btn-secondary" id="btn-deselect-all">[-] Nenhum</button>
+          <button class="btn btn-secondary" id="btn-keep-names">[✓] Manter Nomes</button>
+          <button class="btn btn-secondary" id="btn-remove-names">[✂] Remover Nomes</button>
           <button class="btn btn-secondary" id="btn-clear-history">[🗑️] Limpar Histórico</button>
           <button class="btn btn-danger" id="btn-reset">[↻] Reset Total</button>
         </div>
@@ -1218,10 +2219,14 @@
         localStorage.setItem('__dl-warning-closed', 'true');
       };
       document.getElementById('btn-scan').onclick = () => { scan(); };
+      document.getElementById('btn-expand-table').onclick = () => { expandTable(); };
+      document.getElementById('btn-open-iframes').onclick = () => { openBlockedFrames(); };
       document.getElementById('btn-start').onclick = () => start();
       document.getElementById('btn-stop').onclick = () => stop();
       document.getElementById('btn-select-all').onclick = () => selectAll();
       document.getElementById('btn-deselect-all').onclick = () => deselectAll();
+      document.getElementById('btn-keep-names').onclick = () => applyQueueNameFilter('keep');
+      document.getElementById('btn-remove-names').onclick = () => applyQueueNameFilter('remove');
       document.getElementById('btn-clear-history').onclick = () => { 
         if (confirm('Limpar histórico de downloads? Isso permitirá escanear novamente todos os arquivos.')) clearHistory(); 
       };
@@ -1324,6 +2329,24 @@
       document.getElementById('btn-stop').disabled = !state.running;
       document.getElementById('btn-scan').disabled = state.running;
 
+      const keepNamesBtn = document.getElementById('btn-keep-names');
+      const removeNamesBtn = document.getElementById('btn-remove-names');
+      if (keepNamesBtn) keepNamesBtn.disabled = state.running || state.queue.length === 0;
+      if (removeNamesBtn) removeNamesBtn.disabled = state.running || state.queue.length === 0;
+
+      const expandBtn = document.getElementById('btn-expand-table');
+      if (expandBtn) {
+        expandBtn.disabled = state.running || state.expandingTable;
+        expandBtn.textContent = state.expandingTable ? '[...] Expandindo...' : '[⇵] Tabela+Páginas';
+      }
+
+      const openIframesBtn = document.getElementById('btn-open-iframes');
+      if (openIframesBtn) {
+        const totalBlocked = state.blockedFrames.filter(src => src && src !== '(iframe sem src)').length;
+        openIframesBtn.disabled = totalBlocked === 0;
+        openIframesBtn.textContent = totalBlocked > 0 ? `[↗] Abrir Iframe(s) (${totalBlocked})` : '[↗] Abrir Iframe(s)';
+      }
+
       const listEl = document.getElementById('__dl-list');
       listEl.innerHTML = '';
 
@@ -1352,9 +2375,9 @@
     // INICIALIZAÇÃO
     // ============================================
     console.clear();
-    console.log('%c👾 BAIXATRON v3.0 ATIVADO 📡', 'color: #00ff00; font-size: 14px; font-weight: bold');
+    console.log('%c👾 BAIXATRON v3.1 ATIVADO 📡', 'color: #00ff00; font-size: 14px; font-weight: bold');
     console.log('%cO alien invasor de downloads está pronto!', 'color: #666; font-size: 12px');
-    console.log('%cComandos disponíveis: __dl.scan(), __dl.start(), __dl.stop(), __dl.reset()', 'color: #666; font-size: 11px');
+    console.log('%cComandos disponíveis: __dl.scan(), __dl.expandTable(), __dl.openBlockedFrames(), __dl.start(), __dl.stop(), __dl.reset()', 'color: #666; font-size: 11px');
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', createPanel);

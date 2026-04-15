@@ -10,6 +10,7 @@ Baixatron é um script JavaScript para automatizar o download de múltiplos arqu
 
 - Painel visual com controles de escaneamento, início, pausa, seleção e reset
 - Detecção de links de download em páginas comuns e dentro de iframes
+- Detecção de botões de download sem `href` (ícones com handler JavaScript)
 - Seleção de itens a serem processados (checkbox por item)
 - Barra de progresso com porcentagem e tempo estimado restante
 - Estatísticas em tempo real: fila, ativos, processados, selecionados, erros
@@ -79,8 +80,9 @@ PDF, DOC, DOCX, ODT, XLS, XLSX, ODS, CSV, PPT, PPTX, ZIP, RAR, 7Z, TXT, RTF.
 - O download é iniciado via clique no elemento. O destino é controlado pelo navegador (pasta padrão de downloads). Não há seleção de pasta customizada.
 - O modo seguro (`dryRun: true`) evita que downloads reais sejam acionados até que seja desativado.
 - A detecção de links ignora elementos de UI comuns para reduzir cliques indevidos.
+- Em páginas que renderizam botão de download via ícone/SVG (sem URL no HTML), o Baixatron tenta identificar o botão pelo ícone e aciona o click direto no handler da página.
 
 ## Versão
 
-v3.0 — Versão padrão com painel visual, progresso percentual e tempo estimado.
+v3.1 — Inclui detecção de botões de download sem `href` (ícone/SVG com handler JavaScript), além do painel visual, progresso percentual e tempo estimado.
 
