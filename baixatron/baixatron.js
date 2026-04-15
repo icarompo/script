@@ -76,6 +76,47 @@
       .map(term => term.trim())
       .filter(Boolean);
 
+    const parseFilterCriteria = raw => {
+      const terms = parseNameFilterTerms(raw);
+      const ids = new Set();
+      const idRanges = [];
+      const textTokens = [];
+
+      for (const term of terms) {
+        const cleaned = term.trim();
+        if (!cleaned) continue;
+
+        const loose = normLoose(cleaned);
+        const rangeMatch = loose.match(/^(?:de\s*)?(?:id\s*[:#-]?\s*)?(\d{1,10})\s*(?:-|ate|a|to|\.\.)\s*(?:id\s*[:#-]?\s*)?(\d{1,10})$/i);
+        if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
+          const a = parseInt(rangeMatch[1], 10);
+          const b = parseInt(rangeMatch[2], 10);
+          if (Number.isFinite(a) && Number.isFinite(b) && a > 0 && b > 0) {
+            idRanges.push([Math.min(a, b), Math.max(a, b)]);
+            continue;
+          }
+        }
+
+        const idMatch = cleaned.match(/^id\s*[:#-]?\s*(\d{1,10})$/i) || cleaned.match(/^(\d{1,10})$/);
+        if (idMatch && idMatch[1]) {
+          const numeric = parseInt(idMatch[1], 10);
+          if (Number.isFinite(numeric) && numeric > 0) {
+            ids.add(numeric);
+            continue;
+          }
+        }
+
+        textTokens.push(loose);
+      }
+
+      return {
+        terms,
+        ids,
+        idRanges,
+        textTokens: textTokens.filter(Boolean)
+      };
+    };
+
     const toAbs = href => {
       if (!href || typeof href !== 'string') return '';
       const cleaned = href.trim();
@@ -400,6 +441,8 @@
       doneKeys: new Set(),
       queuedKeys: new Set(),
       selectedKeys: new Set(),
+      itemIdByKey: new Map(),
+      nextItemId: 1,
       pageType: null
     };
 
@@ -1038,6 +1081,12 @@
           skipped++;
           continue;
         }
+
+        if (!state.itemIdByKey.has(it.key)) {
+          state.itemIdByKey.set(it.key, state.nextItemId++);
+        }
+        it.itemId = state.itemIdByKey.get(it.key);
+
         state.queue.push(it);
         state.queuedKeys.add(it.key);
         state.selectedKeys.add(it.key);
@@ -1048,39 +1097,50 @@
       return { added, skipped };
     };
 
-    const applyQueueNameFilter = mode => {
+    const applyQueueNameFilter = (mode, rawInput = null) => {
+      if (mode !== 'keep' && mode !== 'remove') {
+        alert('[BAIXATRON] Modo de filtro invalido. Use keep ou remove.');
+        return null;
+      }
+
       if (state.running) {
         alert('[BAIXATRON] Pause os downloads antes de aplicar filtros por nome.');
-        return;
+        return null;
       }
 
       if (state.queue.length === 0) {
         alert('[BAIXATRON] A fila esta vazia. Use [⊙] Escanear primeiro.');
-        return;
+        return null;
       }
 
       const actionLabel = mode === 'keep' ? 'manter' : 'remover';
-      const raw = prompt(
-        `[BAIXATRON] Digite os nomes/trechos para ${actionLabel} da checklist.\n` +
-        'Separe por quebra de linha, virgula, ponto e virgula ou barra vertical.'
-      );
+      const raw = typeof rawInput === 'string'
+        ? rawInput
+        : prompt(
+          `[BAIXATRON] Digite os nomes/trechos para ${actionLabel} da checklist.\n` +
+          'Separe por quebra de linha, virgula, ponto e virgula ou barra vertical.'
+        );
 
-      if (raw === null) return;
+      if (raw === null) return null;
 
-      const terms = parseNameFilterTerms(raw);
+      const criteria = parseFilterCriteria(raw);
+      const terms = criteria.terms;
       if (!terms.length) {
         alert('[BAIXATRON] Nenhum nome informado.');
-        return;
+        return null;
       }
 
       const totalBefore = state.queue.length;
-      const tokens = terms.map(normLoose).filter(Boolean);
       const nextQueue = [];
       let matched = 0;
 
       for (const it of state.queue) {
         const haystack = normLoose([it.titleName, it.text].filter(Boolean).join(' '));
-        const isMatch = tokens.some(token => haystack.includes(token));
+        const itemId = Number(it.itemId);
+        const idMatch = Number.isFinite(itemId) && criteria.ids.has(itemId);
+        const idRangeMatch = Number.isFinite(itemId) && criteria.idRanges.some(([start, end]) => itemId >= start && itemId <= end);
+        const textMatch = criteria.textTokens.some(token => haystack.includes(token));
+        const isMatch = idMatch || idRangeMatch || textMatch;
         if (isMatch) matched++;
 
         const shouldKeep = mode === 'keep' ? isMatch : !isMatch;
@@ -1118,10 +1178,20 @@
       alert(
         `[BAIXATRON] Filtro aplicado (${mode === 'keep' ? 'manter' : 'remover'}).\n` +
         `Termos: ${terms.length}\n` +
+        `IDs no filtro: ${criteria.ids.size}\n` +
+        `Faixas de ID: ${criteria.idRanges.length}\n` +
         `Correspondencias: ${matched}\n` +
         `Removidos da checklist: ${removedCount}\n` +
         `Restantes: ${totalAfter}`
       );
+
+      return {
+        mode,
+        termsCount: terms.length,
+        matched,
+        removedCount,
+        remaining: totalAfter
+      };
     };
 
     const expandTable = async () => {
@@ -1462,6 +1532,8 @@
       state.doneKeys.clear();
       state.queuedKeys.clear();
       state.selectedKeys.clear();
+      state.itemIdByKey.clear();
+      state.nextItemId = 1;
       state.running = false;
       clearTimeout(state.timer);
       updateUI();
@@ -1516,6 +1588,8 @@
         localStorage.setItem('__dl-theme', 'light');
         document.getElementById('__dl-theme-toggle').textContent = '☀️';
       }
+
+      syncItemsModalTheme();
     };
 
     const openBlockedFrames = () => {
@@ -2092,6 +2166,135 @@
         background: #555555;
       }
 
+      #__dl-list-summary {
+        padding: 10px 12px;
+        border-bottom: 1px solid #333333;
+        color: #aaaaaa;
+        font-size: 11px;
+      }
+
+      #__dl-panel.light-mode #__dl-list-summary {
+        border-bottom-color: #ddd;
+        color: #666666;
+        background: #fafafa;
+      }
+
+      #__dl-items-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 1000000;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+
+      #__dl-items-modal.hidden {
+        display: none;
+      }
+
+      #__dl-items-modal .modal-card {
+        width: min(920px, 100%);
+        max-height: 88vh;
+        background: #1a1a1a;
+        color: #ffffff;
+        border: 1px solid #333333;
+        border-radius: 10px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #__dl-items-modal .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid #333333;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      #__dl-items-modal .modal-body {
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+      }
+
+      #__dl-filter-input {
+        width: 100%;
+        min-height: 70px;
+        resize: vertical;
+        border-radius: 6px;
+        border: 1px solid #3a3a3a;
+        background: #101010;
+        color: #f0f0f0;
+        padding: 8px;
+        font-size: 12px;
+      }
+
+      #__dl-filter-help {
+        color: #999999;
+        font-size: 10px;
+      }
+
+      #__dl-modal-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      #__dl-modal-summary {
+        font-size: 11px;
+        color: #bbbbbb;
+      }
+
+      #__dl-modal-list {
+        min-height: 160px;
+        max-height: 46vh;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+
+      #__dl-modal-list .download-item {
+        margin-bottom: 6px;
+      }
+
+      .download-id {
+        min-width: 62px;
+        font-size: 10px;
+        color: #9ec5fe;
+        font-weight: 600;
+      }
+
+      #__dl-items-modal.light-mode .modal-card {
+        background: #ffffff;
+        color: #1a1a1a;
+        border-color: #dddddd;
+      }
+
+      #__dl-items-modal.light-mode .modal-header {
+        border-bottom-color: #dddddd;
+      }
+
+      #__dl-items-modal.light-mode #__dl-filter-input {
+        background: #ffffff;
+        color: #1a1a1a;
+        border-color: #cccccc;
+      }
+
+      #__dl-items-modal.light-mode #__dl-filter-help,
+      #__dl-items-modal.light-mode #__dl-modal-summary {
+        color: #666666;
+      }
+
+      #__dl-items-modal.light-mode .download-id {
+        color: #0d6efd;
+      }
+
       @media (max-width: 600px) {
         #__dl-panel {
           width: calc(100% - 20px);
@@ -2111,8 +2314,142 @@
           padding: 8px 10px;
           font-size: 10px;
         }
+
+        #__dl-items-modal {
+          padding: 8px;
+        }
+
+        #__dl-items-modal .modal-card {
+          max-height: 92vh;
+        }
+
+        #__dl-modal-list {
+          max-height: 52vh;
+        }
       }
     `;
+
+    const syncItemsModalTheme = () => {
+      const panel = document.getElementById('__dl-panel');
+      const modal = document.getElementById('__dl-items-modal');
+      if (!panel || !modal) return;
+      modal.classList.toggle('light-mode', panel.classList.contains('light-mode'));
+    };
+
+    const renderItemsModalList = () => {
+      const listEl = document.getElementById('__dl-modal-list');
+      const summaryEl = document.getElementById('__dl-modal-summary');
+      if (!listEl || !summaryEl) return;
+
+      summaryEl.textContent = `Itens na fila: ${state.queue.length} | Selecionados: ${state.selectedKeys.size}`;
+      listEl.innerHTML = '';
+
+      if (state.queue.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.padding = '12px';
+        empty.style.fontSize = '12px';
+        empty.style.opacity = '0.8';
+        empty.textContent = 'Nenhum item na fila. Execute [⊙] Escanear para carregar downloads.';
+        listEl.appendChild(empty);
+        return;
+      }
+
+      state.queue.forEach((it, idx) => {
+        const isSelected = state.selectedKeys.has(it.key);
+        const isProcessing = state.running && idx === 0;
+        const isDone = state.doneKeys.has(it.key);
+        const displayId = String(it.itemId || (idx + 1)).padStart(4, '0');
+
+        const item = document.createElement('div');
+        item.className = 'download-item';
+        if (isDone) item.classList.add('done');
+        if (isProcessing) item.classList.add('processing');
+
+        item.innerHTML = `
+          <input type="checkbox" class="download-checkbox" ${isSelected ? 'checked' : ''}>
+          <span class="download-id">ID ${displayId}</span>
+          <span class="download-name" title="${it.text || ''}">${it.text || '(sem nome)'}</span>
+          <span class="download-icon">${isDone ? '[✓]' : isProcessing ? '[~]' : '[ ]'}</span>
+        `;
+
+        const checkbox = item.querySelector('.download-checkbox');
+        if (checkbox) {
+          checkbox.onchange = () => toggleSelect(it.key);
+        }
+
+        listEl.appendChild(item);
+      });
+    };
+
+    const closeItemsModal = () => {
+      const modal = document.getElementById('__dl-items-modal');
+      if (!modal) return;
+      modal.classList.add('hidden');
+    };
+
+    const openItemsModal = () => {
+      const modal = document.getElementById('__dl-items-modal');
+      if (!modal) return;
+      syncItemsModalTheme();
+      renderItemsModalList();
+      modal.classList.remove('hidden');
+    };
+
+    const createItemsModal = () => {
+      const existing = document.getElementById('__dl-items-modal');
+      if (existing) existing.remove();
+
+      const modal = document.createElement('div');
+      modal.id = '__dl-items-modal';
+      modal.className = 'hidden';
+      modal.innerHTML = `
+        <div class="modal-card" role="dialog" aria-modal="true" aria-label="Itens e filtros do Baixatron">
+          <div class="modal-header">
+            <span>📋 Itens da Fila e Filtros</span>
+            <button class="btn" id="btn-modal-close" style="flex:0 0 auto; min-width:40px; padding:6px 10px;">✕</button>
+          </div>
+          <div class="modal-body">
+            <textarea id="__dl-filter-input" placeholder="Digite nomes, IDs ou faixas de ID (ex.: 15, id:15, 10-30, de id 10 ate id 30)..."></textarea>
+            <div id="__dl-filter-help">Separadores aceitos: quebra de linha, virgula, ponto e virgula e barra vertical. Para ID use numero ou id:15. Para faixa use 10-30, 10 ate 30 ou de id 10 ate id 30.</div>
+            <div id="__dl-modal-actions">
+              <button class="btn btn-secondary" id="btn-modal-keep">[✓] Manter Nomes</button>
+              <button class="btn btn-secondary" id="btn-modal-remove">[✂] Remover Nomes</button>
+              <button class="btn btn-secondary" id="btn-modal-select-all">[+] Selecionar Todos</button>
+              <button class="btn btn-secondary" id="btn-modal-deselect-all">[-] Desmarcar Todos</button>
+              <button class="btn btn-secondary" id="btn-modal-clear-filter">[⌫] Limpar Campo</button>
+            </div>
+            <div id="__dl-modal-summary"></div>
+            <div id="__dl-modal-list"></div>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+      syncItemsModalTheme();
+
+      const filterInput = modal.querySelector('#__dl-filter-input');
+
+      modal.querySelector('#btn-modal-close').onclick = () => closeItemsModal();
+      modal.querySelector('#btn-modal-clear-filter').onclick = () => {
+        if (filterInput) filterInput.value = '';
+      };
+      modal.querySelector('#btn-modal-select-all').onclick = () => selectAll();
+      modal.querySelector('#btn-modal-deselect-all').onclick = () => deselectAll();
+      modal.querySelector('#btn-modal-keep').onclick = () => {
+        applyQueueNameFilter('keep', filterInput?.value || '');
+      };
+      modal.querySelector('#btn-modal-remove').onclick = () => {
+        applyQueueNameFilter('remove', filterInput?.value || '');
+      };
+
+      modal.addEventListener('click', e => {
+        if (e.target === modal) {
+          closeItemsModal();
+        }
+      });
+    };
+
+    window.__dl.openItemsModal = openItemsModal;
 
     // ============================================
     // RENDERIZAR PAINEL
@@ -2185,17 +2522,16 @@
           <button class="btn btn-primary" id="btn-scan">[⊙] Escanear</button>
           <button class="btn btn-secondary" id="btn-expand-table">[⇵] Tabela+Páginas</button>
           <button class="btn btn-secondary" id="btn-open-iframes">[↗] Abrir Iframe(s)</button>
+          <button class="btn btn-secondary" id="btn-open-items-modal">[📋] Itens e Filtros</button>
           <button class="btn btn-primary" id="btn-start">[▶] Iniciar</button>
           <button class="btn btn-secondary" id="btn-stop" disabled>[⏸] Pausar</button>
           <button class="btn btn-secondary" id="btn-select-all">[+] Todos</button>
           <button class="btn btn-secondary" id="btn-deselect-all">[-] Nenhum</button>
-          <button class="btn btn-secondary" id="btn-keep-names">[✓] Manter Nomes</button>
-          <button class="btn btn-secondary" id="btn-remove-names">[✂] Remover Nomes</button>
           <button class="btn btn-secondary" id="btn-clear-history">[🗑️] Limpar Histórico</button>
           <button class="btn btn-danger" id="btn-reset">[↻] Reset Total</button>
         </div>
 
-        <div id="__dl-list"></div>
+        <div id="__dl-list-summary">Use [📋] Itens e Filtros para ver a lista com IDs e aplicar filtros.</div>
 
         <div class="speed-control">
           <div class="speed-label">
@@ -2212,7 +2548,11 @@
 
       document.body.appendChild(panel);
 
-      document.getElementById('__dl-close').onclick = () => panel.remove();
+      document.getElementById('__dl-close').onclick = () => {
+        panel.remove();
+        const modal = document.getElementById('__dl-items-modal');
+        if (modal) modal.remove();
+      };
       document.getElementById('__dl-theme-toggle').onclick = () => toggleTheme();
       document.getElementById('__dl-warning').onclick = () => {
         document.getElementById('__dl-warning').classList.add('hidden');
@@ -2221,12 +2561,11 @@
       document.getElementById('btn-scan').onclick = () => { scan(); };
       document.getElementById('btn-expand-table').onclick = () => { expandTable(); };
       document.getElementById('btn-open-iframes').onclick = () => { openBlockedFrames(); };
+      document.getElementById('btn-open-items-modal').onclick = () => openItemsModal();
       document.getElementById('btn-start').onclick = () => start();
       document.getElementById('btn-stop').onclick = () => stop();
       document.getElementById('btn-select-all').onclick = () => selectAll();
       document.getElementById('btn-deselect-all').onclick = () => deselectAll();
-      document.getElementById('btn-keep-names').onclick = () => applyQueueNameFilter('keep');
-      document.getElementById('btn-remove-names').onclick = () => applyQueueNameFilter('remove');
       document.getElementById('btn-clear-history').onclick = () => { 
         if (confirm('Limpar histórico de downloads? Isso permitirá escanear novamente todos os arquivos.')) clearHistory(); 
       };
@@ -2255,6 +2594,8 @@
       } else {
         document.getElementById('__dl-theme-toggle').textContent = '🌙';
       }
+
+      createItemsModal();
 
       updateUI();
     };
@@ -2329,10 +2670,8 @@
       document.getElementById('btn-stop').disabled = !state.running;
       document.getElementById('btn-scan').disabled = state.running;
 
-      const keepNamesBtn = document.getElementById('btn-keep-names');
-      const removeNamesBtn = document.getElementById('btn-remove-names');
-      if (keepNamesBtn) keepNamesBtn.disabled = state.running || state.queue.length === 0;
-      if (removeNamesBtn) removeNamesBtn.disabled = state.running || state.queue.length === 0;
+      const modalBtn = document.getElementById('btn-open-items-modal');
+      if (modalBtn) modalBtn.disabled = false;
 
       const expandBtn = document.getElementById('btn-expand-table');
       if (expandBtn) {
@@ -2347,28 +2686,12 @@
         openIframesBtn.textContent = totalBlocked > 0 ? `[↗] Abrir Iframe(s) (${totalBlocked})` : '[↗] Abrir Iframe(s)';
       }
 
-      const listEl = document.getElementById('__dl-list');
-      listEl.innerHTML = '';
+      const listSummary = document.getElementById('__dl-list-summary');
+      if (listSummary) {
+        listSummary.textContent = `Fila atual: ${state.queue.length} item(ns) | Selecionados: ${state.selectedKeys.size}. Abra [📋] Itens e Filtros para gerenciar.`;
+      }
 
-      state.queue.forEach((it, idx) => {
-        const isSelected = state.selectedKeys.has(it.key);
-        const isProcessing = state.running && idx === 0;
-        const isDone = state.doneKeys.has(it.key);
-
-        const item = document.createElement('div');
-        item.className = 'download-item';
-        if (isDone) item.classList.add('done');
-        if (isProcessing) item.classList.add('processing');
-
-        item.innerHTML = `
-          <input type="checkbox" class="download-checkbox" ${isSelected ? 'checked' : ''}>
-          <span class="download-name" title="${it.text}">${it.text || '(sem nome)'}</span>
-          <span class="download-icon">${isDone ? '[✓]' : isProcessing ? '[~]' : '[ ]'}</span>
-        `;
-
-        item.querySelector('.download-checkbox').onchange = () => toggleSelect(it.key);
-        listEl.appendChild(item);
-      });
+      renderItemsModalList();
     };
 
     // ============================================
