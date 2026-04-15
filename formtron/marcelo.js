@@ -55,9 +55,79 @@
   };
 
   const waitForSaveComplete = async () => {
-    await wait(300);
-    await waitForElement('button[aria-label="Novo"]', true, 15000);
-    await wait(200);
+    await wait(900);
+    const startedAt = Date.now();
+    const timeout = 20000;
+    while (Date.now() - startedAt < timeout) {
+      const loading = document.querySelector('.p-button-loading-icon, .pi-spinner, .pi-spin');
+      const saveButton = document.querySelector('button[aria-label="Salvar e Publicar"], button[aria-label="Salvar"], form button[type="submit"]');
+      if (!saveButton) return true;
+      if (!loading && !saveButton.disabled) {
+        await wait(250);
+        return true;
+      }
+      await wait(120);
+    }
+    throw new Error('Timeout aguardando conclusão do salvamento');
+  };
+
+  const normalizeText = (value) => String(value ?? '').trim();
+  const isVisible = (el) => !!(el && (el.offsetParent || el.getClientRects().length));
+
+  const findFirstVisible = (selectors) => {
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (isVisible(el)) return el;
+    }
+    return null;
+  };
+
+  const setFieldValue = (el, value) => {
+    if (!el) return;
+    el.value = value;
+    el.focus();
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  const preencherLinkArquivo = async (url) => {
+    const value = normalizeText(url);
+    if (!value) return true;
+
+    let input = findFirstVisible([
+      '.p-fileupload-content input[type="text"]',
+      '.p-fileupload-content input:not([type="file"])',
+      '.p-fileupload-content textarea',
+      'input[placeholder*="url" i]',
+      'input[placeholder*="link" i]',
+    ]);
+
+    if (!input) {
+      const btnOpenLink = findFirstVisible([
+        '.p-fileupload-buttonbar button.p-button-help',
+        '.p-fileupload-buttonbar button[aria-label*="URL" i]',
+        '.p-fileupload-buttonbar button[aria-label*="Link" i]',
+      ]);
+
+      if (btnOpenLink) {
+        btnOpenLink.click();
+        await scaledSleep(350);
+        input = findFirstVisible([
+          '.p-fileupload-content input[type="text"]',
+          '.p-fileupload-content input:not([type="file"])',
+          '.p-fileupload-content textarea',
+          'input[placeholder*="url" i]',
+          'input[placeholder*="link" i]',
+        ]);
+      }
+    }
+
+    if (!input) {
+      console.warn('Campo de URL do arquivo não encontrado.');
+      return false;
+    }
+
+    setFieldValue(input, value);
     return true;
   };
 
@@ -89,8 +159,18 @@
   // Procura e clica em um <li> de dropdown pelo aria-label ou texto
   const selectByAriaLabel = (label) => {
     if (!label) return false;
+    const targetLabel = normalizeText(label);
     const items = Array.from(document.querySelectorAll('li[aria-label]'));
-    const target = items.find((el) => el.getAttribute('aria-label') === label || el.textContent.trim() === label);
+    const target = items.find((el) => {
+      const aria = normalizeText(el.getAttribute('aria-label'));
+      const text = normalizeText(el.textContent);
+      return (
+        aria === targetLabel ||
+        text === targetLabel ||
+        aria.startsWith(`${targetLabel} -`) ||
+        text.startsWith(`${targetLabel} -`)
+      );
+    });
     if (!target) {
       console.warn(`Opção não encontrada para aria-label: ${label}`);
       return false;
@@ -288,7 +368,7 @@
           <button id="m-stop" class="m-btn danger">⏹ Parar</button>
           <button id="m-loadjson" class="m-btn" style="grid-column: span 3;">📂 Carregar JSON</button>
           <div class="row" style="grid-column: span 3;">
-            <input id="m-startfrom" type="text" placeholder="Começar a partir do decreto (ex: 123)">
+            <input id="m-startfrom" type="text" placeholder="Começar a partir da edição (ex: 0001)">
             <button id="m-apply" class="m-btn">Aplicar</button>
           </div>
           <div class="m-help" id="m-startinfo" style="grid-column: span 3;">Carregue o arquivo JSON para começar</div>
@@ -364,12 +444,17 @@
         state.processed = 0;
         state.errors = 0;
         btnStart.disabled = arquivosFiltrados.length === 0;
-        startInfo.textContent = 'Processando todos os decretos';
+        startInfo.textContent = 'Processando todos os itens';
         startInfo.style.opacity = '0.9';
         updateStats();
         return;
       }
-      const idx = arquivos.findIndex((item) => item.numeroDecreto?.toString() === numeroInicial || item.numero?.toString() === numeroInicial);
+      const idx = arquivos.findIndex(
+        (item) =>
+          normalizeText(item.edicao) === numeroInicial ||
+          normalizeText(item.numeroDecreto) === numeroInicial ||
+          normalizeText(item.numero) === numeroInicial
+      );
       if (idx !== -1) {
         arquivosFiltrados = arquivos.slice(idx);
         state.skipped = idx;
@@ -378,11 +463,11 @@
         state.processed = 0;
         state.errors = 0;
         btnStart.disabled = arquivosFiltrados.length === 0;
-        startInfo.textContent = `✓ Pulando ${state.skipped} decreto(s)`;
+        startInfo.textContent = `✓ Pulando ${state.skipped} item(ns)`;
         startInfo.style.color = '#10b981';
         updateStats();
       } else {
-        startInfo.textContent = `✗ Decreto "${numeroInicial}" não encontrado`;
+        startInfo.textContent = `✗ Edição/Item "${numeroInicial}" não encontrado`;
         startInfo.style.color = '#ef4444';
       }
     };
@@ -443,59 +528,60 @@
 
         const itemStart = Date.now();
 
-        // 1. Tipo de documento
-        fillInput('#acao-form > div:nth-child(1) > div.pt-1.w-full > div:nth-child(1) > div > div:nth-child(1) > span > div > div > div:nth-child(1) > span > div > div > span > input', data.numero);
-        await scaledSleep(2000);
-        click('#tipo_documento > div');
-        await scaledSleep(400);
-        const tipoLabel = data.tipoDocumento || 'Lei';
-        selectByAriaLabel(tipoLabel);
-        await scaledSleep(400);
+        // Mapeamento solicitado:
+        // Edição <- edicao | Tipo de Edição <- tipoEdicao | Data <- data | Link do arquivo <- url | Conteúdo <- conteudo
+        fillInput('#edicao', data.edicao ?? '');
+        await scaledSleep(220);
 
-        // 2. Número
-        fillInput('#numero input', data.numeroDoDocumento);
+        click('#tipo_edicao');
+        await scaledSleep(280);
+        if (normalizeText(data.tipoEdicao)) {
+          selectByAriaLabel(normalizeText(data.tipoEdicao));
+          await scaledSleep(220);
+        }
 
-        // 3. Letra
-        if (data.letra) fillInput('#letra', data.letra);
+        fillInput('#data input', data.data ?? '');
+        await scaledSleep(180);
 
-        // 4. Data
-        fillInput('#data input', data.data);
+        fillInput('#conteudo', data.conteudo ?? '');
+        await scaledSleep(180);
 
-        // 5. Descrição
-        fillInput('textarea.p-inputtextarea', data.descricao);
+        await preencherLinkArquivo(data.url);
+        await scaledSleep(220);
 
-        // 6. Abrir campo de link e preencher
-        click('#acao-form > div:nth-child(1) > div.pt-1.w-full > div:nth-child(2) > div.tw-grid.tw-grid-cols-12 > div > span > div > div.p-fileupload-buttonbar.border-500 > div > div.flex.gap-2 > button.p-button.p-component.p-button-icon-only.p-button-help.p-button-rounded.p-button-outlined');
-        await scaledSleep(400);
-        fillInput('#acao-form > div:nth-child(1) > div.pt-1.w-full > div:nth-child(2) > div.tw-grid.tw-grid-cols-12 > div > span > div > div.p-fileupload-content.border-500 > div > div > div > span > input', data.url);
-
-        // 7. Salvar
+        // Salvar
         setStatus(`💾 Salvando item ${state.currentIndex}...`);
-        click('#acao-form button[aria-label="Salvar"]');
+        click('button[aria-label="Salvar e Publicar"], button[aria-label="Salvar"], form button[type="submit"]');
         try {
           await waitForSaveComplete();
           state.sumItemDuration += (Date.now() - itemStart);
           state.processed++;
           updateStats();
-          // 8. Novo
+          // Se houver botão para novo formulário, usa para avançar com segurança.
           if (state.currentIndex < state.total) {
-            setStatus('➕ Criando novo formulário...');
-            click('button[aria-label="Novo"]');
-            await scaledSleep(800);
+            const btnNovo = findFirstVisible(['button[aria-label="Salvar e Novo"]', 'button[aria-label="Novo"]']);
+            if (btnNovo) {
+              setStatus('➕ Criando novo formulário...');
+              btnNovo.click();
+              await scaledSleep(900);
+            }
           }
         } catch (error) {
           if (error?.response && String(error.response.message || '').includes('Too Many Attemps')) {
             await scaledSleep(20000);
             setStatus(`💾 (Retry) Salvando item ${state.currentIndex}...`);
-            click('#acao-form button[aria-label="Salvar"]');
+            click('button[aria-label="Salvar e Publicar"], button[aria-label="Salvar"], form button[type="submit"]');
             await waitForSaveComplete();
             state.sumItemDuration += (Date.now() - itemStart);
             state.processed++;
             updateStats();
             if (state.currentIndex < state.total) {
-              setStatus('➕ Criando novo formulário...');
-              click('button[aria-label="Novo"]');
-              await scaledSleep(800);
+              const btnNovo = findFirstVisible(['button[aria-label="Salvar e Novo"]', 'button[aria-label="Novo"]']);
+              if (btnNovo) {
+                setStatus('➕ Criando novo formulário...');
+                btnNovo.click();
+                await scaledSleep(900);
+              }
             }
           } else {
             console.error(error);
@@ -581,10 +667,10 @@
     state.processed = 0;
     state.errors = 0;
     const startInfo = document.getElementById('m-startinfo');
-    if (startInfo) startInfo.textContent = arquivos.length ? `Total: ${arquivos.length} decreto(s) no arquivo` : 'Nenhum dado carregado';
+    if (startInfo) startInfo.textContent = arquivos.length ? `Total: ${arquivos.length} item(ns) no arquivo` : 'Nenhum dado carregado';
     const btnStart = document.getElementById('m-start');
     if (btnStart) btnStart.disabled = arquivos.length === 0;
-    setStatus(arquivos.length ? `Arquivo carregado: ${arquivos.length} decreto(s)` : 'Nenhum dado carregado');
+    setStatus(arquivos.length ? `Arquivo carregado: ${arquivos.length} item(ns)` : 'Nenhum dado carregado');
     updateStats();
   };
 
