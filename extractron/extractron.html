@@ -130,6 +130,9 @@
                             Configurar Campos Obrigatórios
                         </h3>
                         <p class="text-sm opacity-70 mb-3">Marque os campos que devem estar presentes nos documentos:</p>
+                        <div class="alert alert-info mb-3 text-xs">
+                            Para tipo Diario Oficial: os campos Tipo de Edicao (01/02/03), Edicao, Data e Conteudo completo sao obrigatorios e validados automaticamente.
+                        </div>
                         
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <label class="label cursor-pointer justify-start gap-3 bg-base-300 p-3 rounded-lg hover:bg-base-100 transition-all">
@@ -168,8 +171,13 @@
                             ID de Documentação (Obrigatório)
                         </span>
                     </label>
+                    <input type="text" id="buscarDocumento" placeholder="Busque por ID ou nome do documento"
+                           class="input input-bordered mb-2" autocomplete="off" />
                     <select id="select" class="select select-primary">
                     </select>
+                    <label class="label">
+                        <span class="label-text-alt opacity-70">Digite o ID (ex: 401) ou o nome (ex: Ata) para filtrar e selecionar.</span>
+                    </label>
                 </div>
                 
                 <!-- URL Base -->
@@ -400,6 +408,268 @@
             if (dashStatus) dashStatus.textContent = 'Concluído';
         }
 
+        function isTipoDiario(tipoDocumento) {
+            const nome = String(tipoDocumento || '').toLowerCase();
+            return /di[aá]rio\s+oficial/.test(nome);
+        }
+
+        function normalizarSemAcentos(valor) {
+            return String(valor || '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '');
+        }
+
+        function isTipoProjetoPoliticoPedagogico(tipoDocumento) {
+            const nome = normalizarSemAcentos(tipoDocumento).toLowerCase();
+            return /projeto\s+politico\s+pedagogico|\bppp\b/.test(nome);
+        }
+
+        function normalizarTextoCompleto(texto) {
+            return String(texto || '')
+                .replace(/\u00a0/g, ' ')
+                .replace(/[ \t]+/g, ' ')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+        }
+
+        function extrairDataPadrao(texto, nomeArquivo) {
+            const fonte = `${nomeArquivo || ''} ${texto || ''}`;
+            const meses = {
+                'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'março': '03', 'abril': '04',
+                'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+                'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+            };
+
+            const matchExtenso = fonte.match(/(\d{1,2})\s+de\s+([A-Za-zçÇãÃõÕáÁéÉíÍóÓúÚâÂêÊôÔàÀ]+)\s+de\s+(\d{4})/i);
+            if (matchExtenso) {
+                const dia = String(parseInt(matchExtenso[1], 10)).padStart(2, '0');
+                const mesNome = matchExtenso[2].toLowerCase();
+                const mes = meses[mesNome];
+                const ano = matchExtenso[3];
+                if (mes) return `${dia}/${mes}/${ano}`;
+            }
+
+            const matchNumerico = fonte.match(/\b(\d{1,2})[\.\/-](\d{1,2})[\.\/-](\d{4})\b/);
+            if (matchNumerico) {
+                const dia = String(parseInt(matchNumerico[1], 10)).padStart(2, '0');
+                const mes = String(parseInt(matchNumerico[2], 10)).padStart(2, '0');
+                const ano = matchNumerico[3];
+                return `${dia}/${mes}/${ano}`;
+            }
+
+            return null;
+        }
+
+        function extrairTipoEdicaoDiario(texto, nomeArquivo) {
+            const fonte = `${nomeArquivo || ''} ${texto || ''}`;
+
+            const codeMatch = fonte.match(/tipo\s+de\s+edi[cç][aã]o\s*[:\-]?\s*(0?[123])\b/i);
+            if (codeMatch) {
+                return String(parseInt(codeMatch[1], 10)).padStart(2, '0');
+            }
+
+            if (/\bedi[cç][aã]o\s+suplemento|\bsuplemento\b/i.test(fonte)) return '03';
+            if (/\bedi[cç][aã]o\s+extra|\bextra\b/i.test(fonte)) return '02';
+            if (/\bedi[cç][aã]o\s+normal|\bnormal\b|\bordin[aá]ri[ao]\b/i.test(fonte)) return '01';
+
+            // Diario sem marcador explicito assume edicao normal por padrao.
+            return '01';
+        }
+
+        function extrairNumeroEdicaoDiario(texto, nomeArquivo) {
+            const fonte = `${nomeArquivo || ''} ${texto || ''}`;
+            const padroes = [
+                /\bano\s+[ivxlcdm]+\b[^\n\r]{0,260}?\b(?:n\s*[º°o]?|n[º°o])\s*(\d{1,8})\b/i,
+                /(?:^|[\s\-])(?:n\s*[º°o]?|n[º°o])\s*(\d{1,8})\s*(?:di[aá]rio\s+oficial|eletr[oô]nico)/i,
+                /edi[cç][aã]o\s*(?:n[º°o]\s*)?(\d{1,8})\b/i,
+                /\bed\.?\s*(\d{1,8})\b/i,
+                /\bdi[aá]rio\s+oficial\b[^\d]{0,40}(\d{1,8})\b/i
+            ];
+
+            for (const regex of padroes) {
+                const match = fonte.match(regex);
+                if (match && match[1]) return match[1];
+            }
+
+            const matchArquivo = String(nomeArquivo || '').match(/\bdoem\s*0*(\d{1,8})\b/i);
+            if (matchArquivo && matchArquivo[1]) return matchArquivo[1];
+
+            return null;
+        }
+
+        function extrairInformacoesDiario(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            const conteudo = normalizarTextoCompleto(texto);
+            const tipoEdicao = extrairTipoEdicaoDiario(conteudo, nomeArquivo);
+            const edicao = extrairNumeroEdicaoDiario(conteudo, nomeArquivo);
+            const data = extrairDataPadrao(conteudo, nomeArquivo);
+
+            const mapaTipo = {
+                '01': 'Normal',
+                '02': 'Extra',
+                '03': 'Suplemento'
+            };
+
+            const descricaoBase = `DIARIO OFICIAL - EDICAO ${edicao || 'N/A'} - TIPO ${tipoEdicao ? `${tipoEdicao} (${mapaTipo[tipoEdicao]})` : 'N/A'}`;
+
+            return {
+                numero: numeroDocumento,
+                arquivo: nomeArquivo,
+                numeroDoDocumento: edicao,
+                edicao: edicao,
+                tipoEdicao: tipoEdicao,
+                tipoEdicaoDescricao: tipoEdicao ? mapaTipo[tipoEdicao] : null,
+                data: data,
+                letra: null,
+                descricao: descricaoBase,
+                conteudo: conteudo || null,
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
+                tipoDocumento: tipoDocumento
+            };
+        }
+
+        function extrairAnoPPP(texto, nomeArquivo) {
+            const anoAtual = new Date().getFullYear();
+            const primeiraPagina = normalizarTextoCompleto(String(texto || '').slice(0, 3500));
+            const fonteCompleta = normalizarTextoCompleto(`${nomeArquivo || ''} ${texto || ''}`);
+
+            const escolherAno = (trecho) => {
+                const anos = Array.from(String(trecho || '').matchAll(/\b(19|20)\d{2}\b/g))
+                    .map((m) => parseInt(m[0], 10))
+                    .filter((ano) => ano >= 2000 && ano <= (anoAtual + 2));
+
+                if (!anos.length) return null;
+                if (anos.includes(anoAtual)) return String(anoAtual);
+                return String(Math.max(...anos));
+            };
+
+            const padroesContextuais = [
+                /projeto\s+pol[ií]tico\s+pedag[óo]gico[^\d]{0,120}((?:19|20)\d{2})/i,
+                /\b(?:ano\s+letivo|vig[eê]ncia|exerc[ií]cio|refer[eê]ncia)\s*[:\-]?\s*((?:19|20)\d{2})\b/i
+            ];
+
+            // Prioriza a primeira página do PDF, que é onde normalmente fica o ano do PPP.
+            for (const regex of padroesContextuais) {
+                const matchPrimeira = primeiraPagina.match(regex);
+                if (matchPrimeira && matchPrimeira[1]) return matchPrimeira[1];
+            }
+
+            const anoPrimeiraPagina = escolherAno(primeiraPagina);
+            if (anoPrimeiraPagina) return anoPrimeiraPagina;
+
+            for (const regex of padroesContextuais) {
+                const matchCompleto = fonteCompleta.match(regex);
+                if (matchCompleto && matchCompleto[1]) return matchCompleto[1];
+            }
+
+            const anoCompleto = escolherAno(fonteCompleta);
+            return anoCompleto || String(anoAtual);
+        }
+
+        function limparDescricaoPPP(descricao) {
+            let valor = String(descricao || '')
+                .replace(/\s+/g, ' ')
+                .replace(/^[\-–—:;,.\s]+/, '')
+                .replace(/[\-–—:;,.\s]+$/, '')
+                .replace(/\s+[Ee]\s*$/, '')
+                .replace(/\b(?:ano\s+letivo|vig[eê]ncia|vers[aã]o|revis[aã]o)\b.*$/i, '')
+                .trim();
+
+            // Corta informacoes de cabecalho/rodape que costumam vir apos o nome da escola.
+            const indiceCorte = valor.search(/\b(?:PROJETO\s+POL[IÍ]TICO\s+PEDAG[ÓO]GICO|\bPPP\b|ARAGUA[IÍ]NA|ENDERE[CÇ]O|RUA|AVENIDA|AV\.?\b|BAIRRO|CEP|TELEFONE|FONE|TEL\.?\b|E\s*-?\s*MAIL|EMAIL|HOTMAIL|GMAIL|OUTLOOK|GESTOR(?:A)?|DIRETOR(?:A)?|SECRETARIA|MUNIC[IÍ]PIO|SEMED)\b|\b\d{2}\s*\d{4,5}\s*[-\.]?\s*\d{4}\b/i);
+            if (indiceCorte > 0) {
+                valor = valor.substring(0, indiceCorte).trim();
+            }
+
+            // Remove caudas comuns de contato/OCR apos o nome.
+            valor = valor
+                .replace(/\b\d{2}\s*\d{4,5}\s*[-\.]?\s*\d{4}.*$/i, '')
+                .replace(/\b(?:TEL\.?|TELEFONE|FONE|E\s*-?\s*MAIL|EMAIL|HOTMAIL|GMAIL|OUTLOOK)\b.*$/i, '')
+                .replace(/\bESC\s*-\s*.*$/i, '')
+                .trim();
+
+            // Remove repeticao exata de nome causada por OCR (ex.: "ESCOLA X ESCOLA X").
+            valor = valor.replace(/\b(ESCOLA(?:\s+MUNICIPAL|\s+PAROQUIAL|\s+DE\s+TEMPO\s+INTEGRAL)?\s+[A-ZÀ-Ú0-9'\-\s]{8,120}?)\s+\1\b/i, '$1');
+
+            return valor
+                .replace(/\s+/g, ' ')
+                .replace(/[\-–—:;,.\s]+$/, '')
+                .trim();
+        }
+
+        function extrairPrimeiraPaginaAproximada(texto, limite = 5000) {
+            return normalizarTextoCompleto(String(texto || '').slice(0, limite));
+        }
+
+        function extrairNomeEscolaPPP(texto, nomeArquivo) {
+            const primeiraPagina = extrairPrimeiraPaginaAproximada(texto);
+            const primeiraPaginaUpper = primeiraPagina.toUpperCase()
+                .replace(/[^A-ZÀ-Ú0-9\s'\-]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            const delimitador = '(?=\\s+(?:PROJETO\\s+POL[IÍ]TICO\\s+PEDAG[ÓO]GICO|PPP|ARAGUA[IÍ]NA|ENDERE[CÇ]O|RUA|AVENIDA|AV\\.?|BAIRRO|CEP|TELEFONE|FONE|TEL\\.?|EMAIL|E\\s*-?\\s*MAIL|HOTMAIL|GMAIL|OUTLOOK|GESTOR(?:A)?|DIRETOR(?:A)?|SECRETARIA|MUNIC[IÍ]PIO|SEMED)\\b|\\s+\\d{2}\\s*\\d{4,5}\\s*[-\\.]?\\s*\\d{4}\\b|$)';
+
+            const padroesPrimeiraPagina = [
+                new RegExp(`\\b(ESCOLA\\s+MUNICIPAL(?:\\s+DE\\s+TEMPO\\s+INTEGRAL)?\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,140}?)${delimitador}`),
+                new RegExp(`\\b(ESCOLA\\s+PAROQUIAL\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,140}?)${delimitador}`),
+                new RegExp(`\\b(CMEI\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,120}?)${delimitador}`),
+                new RegExp(`\\b(EMEI\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,120}?)${delimitador}`),
+                new RegExp(`\\b(EMEF\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,120}?)${delimitador}`),
+                new RegExp(`\\b(COL[EÉ]GIO\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,140}?)${delimitador}`),
+                new RegExp(`\\b(INSTITUTO\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,140}?)${delimitador}`),
+                new RegExp(`\\b(ESCOLA\\s+[A-ZÀ-Ú0-9'\\-\\s]{6,140}?)${delimitador}`)
+            ];
+
+            for (const regex of padroesPrimeiraPagina) {
+                const match = primeiraPaginaUpper.match(regex);
+                if (match && match[1]) {
+                    const escola = limparDescricaoPPP(match[1]);
+                    if (escola.length >= 8) {
+                        return escola;
+                    }
+                }
+            }
+
+            const contextoPPP = primeiraPaginaUpper.match(/PROJETO\s+POL[IÍ]TICO\s+PEDAG[ÓO]GICO\s+(?:DA|DO|DE)\s+([^\.\n;:]{8,140})/);
+            if (contextoPPP && contextoPPP[1]) {
+                const escola = limparDescricaoPPP(contextoPPP[1]);
+                if (escola.length >= 8) {
+                    return escola;
+                }
+            }
+
+            const nomeBase = String(nomeArquivo || '')
+                .replace(/\.pdf$/i, '')
+                .replace(/[_\-]+/g, ' ')
+                .replace(/\bppp\b/ig, '')
+                .replace(/\b(?:19|20)\d{2}\b/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            return nomeBase ? nomeBase.toUpperCase() : null;
+        }
+
+        function extrairInformacoesPPP(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            const anoOuData = extrairAnoPPP(texto, nomeArquivo);
+            const anoAtual = String(new Date().getFullYear());
+            const hoje = new Date();
+            const dataHoje = `${String(hoje.getDate()).padStart(2, '0')}/${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+            const data = /^\d{4}$/.test(String(anoOuData)) && String(anoOuData) === anoAtual
+                ? dataHoje
+                : anoOuData;
+            const descricao = extrairNomeEscolaPPP(texto, nomeArquivo);
+            const url = `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`;
+
+            return {
+                numero: numeroDocumento,
+                arquivo: nomeArquivo,
+                data: data,
+                descricao: descricao || null,
+                url: url,
+                tipoDocumento: tipoDocumento || 'Projeto Politico Pedagogico'
+            };
+        }
+
         function validarDocumentos(documentos, camposObrigatorios) {
             const documentosValidos = [];
             const documentosFalhos = [];
@@ -407,6 +677,7 @@
             documentos.forEach(doc => {
                 let temErro = false;
                 const erros = [];
+                const isPPP = isTipoProjetoPoliticoPedagogico(doc.tipoDocumento);
                 
                 // Verificar se tem erro no processamento
                 if (doc.erro) {
@@ -415,7 +686,7 @@
                 }
                 
                 // Validar campos obrigatórios
-                if (camposObrigatorios.numero && (!doc.numeroDoDocumento || doc.numeroDoDocumento === 'Erro no processamento')) {
+                if (!isPPP && camposObrigatorios.numero && (!doc.numeroDoDocumento || doc.numeroDoDocumento === 'Erro no processamento')) {
                     temErro = true;
                     erros.push('Número do documento ausente ou inválido');
                 }
@@ -433,6 +704,29 @@
                 if (camposObrigatorios.arquivo && (!doc.arquivo || doc.arquivo.trim() === '')) {
                     temErro = true;
                     erros.push('Arquivo não informado');
+                }
+
+                // Regras obrigatorias para Diario Oficial
+                if (isTipoDiario(doc.tipoDocumento) || doc.tipoEdicao || doc.edicao || doc.conteudo) {
+                    if (!doc.tipoEdicao || !['01', '02', '03'].includes(String(doc.tipoEdicao))) {
+                        temErro = true;
+                        erros.push('Tipo de Edição ausente ou inválido (use 01, 02 ou 03)');
+                    }
+
+                    if (!doc.edicao || !/^\d+$/.test(String(doc.edicao))) {
+                        temErro = true;
+                        erros.push('Edição ausente ou inválida');
+                    }
+
+                    if (!doc.data || doc.data === 'Erro') {
+                        temErro = true;
+                        erros.push('Data ausente ou inválida');
+                    }
+
+                    if (!doc.conteudo || String(doc.conteudo).trim().length < 20) {
+                        temErro = true;
+                        erros.push('Conteúdo ausente ou vazio');
+                    }
                 }
                 
                 if (temErro) {
@@ -484,7 +778,22 @@
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             
             let textoCompleto = '';
-            let usouOCR = false;
+            const processarSomentePrimeiraPagina = isTipoProjetoPoliticoPedagogico(tipoDocumento);
+
+            if (processarSomentePrimeiraPagina) {
+                const page = await pdf.getPage(1);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+
+                if (pageText.trim().length < 50) {
+                    console.log(`PPP ${file.name} com pouco texto na pagina 1 - usando OCR somente na primeira pagina...`);
+                    textoCompleto = await extrairTextoComOCR(page);
+                } else {
+                    textoCompleto = pageText;
+                }
+
+                return extrairInformacoes(textoCompleto, file.name, numeroDocumento, urlDocumentos, tipoDocumento);
+            }
             
             // Ler todas as páginas
             for (let i = 1; i <= pdf.numPages; i++) {
@@ -1375,11 +1684,33 @@
                 url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
                 tipoDocumento: tipoDocumento
             };
+
+            return resultado;
         }
 
         function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
             console.log(`[DEBUG] Processando arquivo: ${nomeArquivo}`);
             console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 500));
+
+            if (isTipoDiario(tipoDocumento)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DIARIO pelo tipo selecionado`);
+                return extrairInformacoesDiario(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+            }
+
+            if (isTipoProjetoPoliticoPedagogico(tipoDocumento)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PPP pelo tipo selecionado`);
+                return extrairInformacoesPPP(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+            }
+
+            if (/di[aá]rio\s+oficial/i.test(`${nomeArquivo} ${texto.substring(0, 700)}`)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DIARIO pelo conteúdo/nome`);
+                return extrairInformacoesDiario(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+            }
+
+            if (/projeto\s+pol[ií]tico\s+pedag[óo]gico|\bppp\b/i.test(texto.substring(0, 1200))) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PPP pelo conteúdo`);
+                return extrairInformacoesPPP(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+            }
             
             // PRIORIDADE 1: Verificar pelo NOME DO ARQUIVO (mais confiável)
             if (/^Lei\s+n[°ºª\s]/i.test(nomeArquivo)) {
@@ -1581,10 +1912,28 @@
                                         <span class="opacity-70">Tipo:</span>
                                         <span class="badge badge-primary">${documento.tipoDocumento || 'DECRETO'}</span>
                                     </div>
+                                    ${documento.tipoEdicao ? `
+                                    <div class="flex justify-between">
+                                        <span class="opacity-70">Tipo de Edição:</span>
+                                        <span class="badge badge-secondary">${documento.tipoEdicao} ${documento.tipoEdicaoDescricao ? `- ${documento.tipoEdicaoDescricao}` : ''}</span>
+                                    </div>
+                                    ` : ''}
+                                    ${documento.edicao ? `
+                                    <div class="flex justify-between">
+                                        <span class="opacity-70">Edição:</span>
+                                        <span class="badge badge-outline">${documento.edicao}</span>
+                                    </div>
+                                    ` : ''}
                                     ${documento.descricao ? `
                                     <div class="mt-3">
                                         <p class="opacity-70 text-xs mb-1">Descrição:</p>
                                         <p class="text-xs bg-base-300 p-2 rounded">${documento.descricao}</p>
+                                    </div>
+                                    ` : ''}
+                                    ${documento.conteudo ? `
+                                    <div class="mt-3">
+                                        <p class="opacity-70 text-xs mb-1">Conteúdo (prévia):</p>
+                                        <p class="text-xs bg-base-300 p-2 rounded">${documento.conteudo.substring(0, 500)}${documento.conteudo.length > 500 ? '...' : ''}</p>
                                     </div>
                                     ` : ''}
                                 </div>
@@ -1682,20 +2031,128 @@
             resultsDiv.innerHTML = html;
         }
 
+        let tiposDocumentosCache = [];
+
+        function normalizarBusca(valor) {
+            return String(valor || '')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .trim();
+        }
+
+        function labelTipoDocumento(item) {
+            return `${item.id} - ${item.nome}`;
+        }
+
+        function renderizarOpcoesTipo(items, manterSelecionado = true) {
+            const select = document.getElementById('select');
+            const valorAtual = manterSelecionado ? String(select.value || '') : '';
+
+            select.innerHTML = '<option value="">Selecione um documento...</option>';
+
+            items.forEach((item) => {
+                const option = document.createElement('option');
+                option.value = String(item.id);
+                option.textContent = labelTipoDocumento(item);
+                select.appendChild(option);
+            });
+
+            if (valorAtual) {
+                select.value = valorAtual;
+            }
+
+            if (!select.value && items.length === 1) {
+                select.value = String(items[0].id);
+            }
+        }
+
+        function filtrarTiposDocumento(termo) {
+            const termoNormalizado = normalizarBusca(termo);
+
+            if (!termoNormalizado) {
+                return tiposDocumentosCache;
+            }
+
+            return tiposDocumentosCache.filter((item) => {
+                const id = String(item.id);
+                const nome = normalizarBusca(item.nome);
+                return id.includes(termoNormalizado) || nome.includes(termoNormalizado);
+            });
+        }
+
+        function buscarTipoPorValor(termo) {
+            const termoNormalizado = normalizarBusca(termo);
+            if (!termoNormalizado) return null;
+
+            return tiposDocumentosCache.find((item) => String(item.id) === termoNormalizado)
+                || tiposDocumentosCache.find((item) => normalizarBusca(item.nome) === termoNormalizado)
+                || null;
+        }
+
         const dropdownList = async () => {
             const el = document.getElementById('tiposDeDocumentos');
+            const buscaInput = document.getElementById('buscarDocumento');
+            const select = document.getElementById('select');
             let items = [];
 
             if (window.tiposDeDocumentos && Array.isArray(window.tiposDeDocumentos)) {
                 items = window.tiposDeDocumentos;
             } else {
-                items = JSON.parse(el.textContent);
+                try {
+                    items = JSON.parse(el.textContent || '[]');
+                } catch {
+                    items = [];
+                }
             }
 
-            const dropdownList = document.getElementById('select');
+            tiposDocumentosCache = items;
+            renderizarOpcoesTipo(tiposDocumentosCache, false);
 
-            items.forEach((item) => {
-                dropdownList.innerHTML = dropdownList.innerHTML + `<option id="${item.id}" value="${item.id}">${item.id} - ${item.nome}</option>`;
+            buscaInput.addEventListener('input', (event) => {
+                const termo = event.target.value || '';
+                const filtrados = filtrarTiposDocumento(termo);
+                renderizarOpcoesTipo(filtrados);
+
+                const tipoExato = buscarTipoPorValor(termo);
+                if (tipoExato) {
+                    select.value = String(tipoExato.id);
+                    selecionarTipo(tipoExato);
+                } else if (filtrados.length === 1) {
+                    select.value = String(filtrados[0].id);
+                    selecionarTipo(filtrados[0]);
+                } else if (select.value) {
+                    const atual = tiposDocumentosCache.find((item) => String(item.id) === String(select.value));
+                    selecionarTipo(atual);
+                }
+            });
+
+            buscaInput.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+
+                const tipoExato = buscarTipoPorValor(buscaInput.value || '');
+                if (tipoExato) {
+                    select.value = String(tipoExato.id);
+                    buscaInput.value = labelTipoDocumento(tipoExato);
+                    selecionarTipo(tipoExato);
+                    return;
+                }
+
+                const filtrados = filtrarTiposDocumento(buscaInput.value || '');
+                if (filtrados.length === 1) {
+                    select.value = String(filtrados[0].id);
+                    buscaInput.value = labelTipoDocumento(filtrados[0]);
+                    selecionarTipo(filtrados[0]);
+                }
+            });
+
+            select.addEventListener('change', () => {
+                const selecionado = tiposDocumentosCache.find((item) => String(item.id) === String(select.value));
+                if (selecionado) {
+                    buscaInput.value = labelTipoDocumento(selecionado);
+                    selecionarTipo(selecionado);
+                }
             });
         }
 
@@ -1711,10 +2168,10 @@
             if (tipo?.possui_numero)
                 numero.checked = true;
 
-            if (tipo?.publicar_portal)
+            if (tipo?.publicar_portal && publicarTransparencia)
                 publicarTransparencia.checked = true;
 
-            if (tipo?.publicar_diario)
+            if (tipo?.publicar_diario && publicarOficial)
                 publicarOficial.checked = true;
         }
 

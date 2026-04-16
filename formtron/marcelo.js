@@ -72,6 +72,14 @@
   };
 
   const normalizeText = (value) => String(value ?? '').trim();
+  const normalizeUrl = (value) => {
+    const raw = normalizeText(value);
+    if (!raw) return '';
+    return raw
+      .replace(/^https?:\/\/(www\.)?araguaina\.to\.gov\.br\/?/i, '')
+      .replace(/^(www\.)?araguaina\.to\.gov\.br\/?/i, '')
+      .replace(/^\/+/, '');
+  };
   const isVisible = (el) => !!(el && (el.offsetParent || el.getClientRects().length));
 
   const findFirstVisible = (selectors) => {
@@ -86,12 +94,22 @@
     if (!el) return;
     el.value = value;
     el.focus();
+    const enterEvent = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+    });
+    el.dispatchEvent(enterEvent);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.blur();
   };
 
   const preencherLinkArquivo = async (url) => {
-    const value = normalizeText(url);
+    const value = normalizeUrl(url);
     if (!value) return true;
 
     let input = findFirstVisible([
@@ -128,6 +146,10 @@
     }
 
     setFieldValue(input, value);
+    await scaledSleep(180);
+    if (normalizeText(input.value) !== value) {
+      setFieldValue(input, value);
+    }
     return true;
   };
 
@@ -368,7 +390,7 @@
           <button id="m-stop" class="m-btn danger">⏹ Parar</button>
           <button id="m-loadjson" class="m-btn" style="grid-column: span 3;">📂 Carregar JSON</button>
           <div class="row" style="grid-column: span 3;">
-            <input id="m-startfrom" type="text" placeholder="Começar a partir da edição (ex: 0001)">
+            <input id="m-startfrom" type="text" placeholder="Começar a partir do decreto (ex: 123)">
             <button id="m-apply" class="m-btn">Aplicar</button>
           </div>
           <div class="m-help" id="m-startinfo" style="grid-column: span 3;">Carregue o arquivo JSON para começar</div>
@@ -444,17 +466,12 @@
         state.processed = 0;
         state.errors = 0;
         btnStart.disabled = arquivosFiltrados.length === 0;
-        startInfo.textContent = 'Processando todos os itens';
+        startInfo.textContent = 'Processando todos os decretos';
         startInfo.style.opacity = '0.9';
         updateStats();
         return;
       }
-      const idx = arquivos.findIndex(
-        (item) =>
-          normalizeText(item.edicao) === numeroInicial ||
-          normalizeText(item.numeroDecreto) === numeroInicial ||
-          normalizeText(item.numero) === numeroInicial
-      );
+      const idx = arquivos.findIndex((item) => normalizeText(item.numeroDecreto) === numeroInicial || normalizeText(item.numero) === numeroInicial);
       if (idx !== -1) {
         arquivosFiltrados = arquivos.slice(idx);
         state.skipped = idx;
@@ -463,11 +480,11 @@
         state.processed = 0;
         state.errors = 0;
         btnStart.disabled = arquivosFiltrados.length === 0;
-        startInfo.textContent = `✓ Pulando ${state.skipped} item(ns)`;
+        startInfo.textContent = `✓ Pulando ${state.skipped} decreto(s)`;
         startInfo.style.color = '#10b981';
         updateStats();
       } else {
-        startInfo.textContent = `✗ Edição/Item "${numeroInicial}" não encontrado`;
+        startInfo.textContent = `✗ Decreto "${numeroInicial}" não encontrado`;
         startInfo.style.color = '#ef4444';
       }
     };
@@ -516,72 +533,69 @@
       inputStart.disabled = true;
       btnApply.disabled = true;
 
-      setStatus(`▶️ Iniciando processamento (${arquivosFiltrados.length} itens)`);
+      setStatus(`▶️ Iniciando processamento (${arquivosFiltrados.length} decretos)`);
 
       for (const data of arquivosFiltrados) {
         if (state.stopped) break;
         while (state.paused && !state.stopped) await wait(120);
 
         state.currentIndex++;
-        setStatus(`▶️ Processando item ${state.currentIndex}/${state.total}`);
+        setStatus(`▶️ Processando decreto ${state.currentIndex}/${state.total}`);
         updateStats();
 
         const itemStart = Date.now();
 
-        // Mapeamento solicitado:
-        // Edição <- edicao | Tipo de Edição <- tipoEdicao | Data <- data | Link do arquivo <- url | Conteúdo <- conteudo
-        fillInput('#edicao', data.edicao ?? '');
-        await scaledSleep(220);
+        // Fluxo de decreto/documento (igual ao Formtron)
+        fillInput('#acao-form > div:nth-child(1) > div.pt-1.w-full > div:nth-child(1) > div > div:nth-child(1) > span > div > div > div:nth-child(1) > span > div > div > span > input', data.numero ?? '');
+        await scaledSleep(2000);
+        click('#tipo_documento > div');
+        await scaledSleep(400);
+        click('#tipo_documento_38');
+        await scaledSleep(400);
 
-        click('#tipo_edicao');
-        await scaledSleep(280);
-        if (normalizeText(data.tipoEdicao)) {
-          selectByAriaLabel(normalizeText(data.tipoEdicao));
-          await scaledSleep(220);
+        fillInput('#numero input', data.numeroDoDocumento ?? '');
+
+        if (normalizeText(data.letra)) {
+          fillInput('#letra', data.letra);
         }
 
         fillInput('#data input', data.data ?? '');
-        await scaledSleep(180);
 
-        fillInput('#conteudo', data.conteudo ?? '');
-        await scaledSleep(180);
+        fillInput('textarea.p-inputtextarea', data.descricao ?? '');
 
-        await preencherLinkArquivo(data.url);
+        const urlOk = await preencherLinkArquivo(data.url);
+        if (!urlOk) {
+          state.errors++;
+          setStatus(`⚠️ URL não encontrada no formulário (decreto ${state.currentIndex})`);
+        }
         await scaledSleep(220);
 
         // Salvar
-        setStatus(`💾 Salvando item ${state.currentIndex}...`);
-        click('button[aria-label="Salvar e Publicar"], button[aria-label="Salvar"], form button[type="submit"]');
+        setStatus(`💾 Salvando decreto ${state.currentIndex}...`);
+        click('#acao-form button[aria-label="Salvar"]');
         try {
           await waitForSaveComplete();
           state.sumItemDuration += (Date.now() - itemStart);
           state.processed++;
           updateStats();
-          // Se houver botão para novo formulário, usa para avançar com segurança.
           if (state.currentIndex < state.total) {
-            const btnNovo = findFirstVisible(['button[aria-label="Salvar e Novo"]', 'button[aria-label="Novo"]']);
-            if (btnNovo) {
-              setStatus('➕ Criando novo formulário...');
-              btnNovo.click();
-              await scaledSleep(900);
-            }
+            setStatus('➕ Criando novo formulário...');
+            click('button[aria-label="Novo"]');
+            await scaledSleep(800);
           }
         } catch (error) {
           if (error?.response && String(error.response.message || '').includes('Too Many Attemps')) {
             await scaledSleep(20000);
-            setStatus(`💾 (Retry) Salvando item ${state.currentIndex}...`);
-            click('button[aria-label="Salvar e Publicar"], button[aria-label="Salvar"], form button[type="submit"]');
+            setStatus(`💾 (Retry) Salvando decreto ${state.currentIndex}...`);
+            click('#acao-form button[aria-label="Salvar"]');
             await waitForSaveComplete();
             state.sumItemDuration += (Date.now() - itemStart);
             state.processed++;
             updateStats();
             if (state.currentIndex < state.total) {
-              const btnNovo = findFirstVisible(['button[aria-label="Salvar e Novo"]', 'button[aria-label="Novo"]']);
-              if (btnNovo) {
-                setStatus('➕ Criando novo formulário...');
-                btnNovo.click();
-                await scaledSleep(900);
-              }
+              setStatus('➕ Criando novo formulário...');
+              click('button[aria-label="Novo"]');
+              await scaledSleep(800);
             }
           } else {
             console.error(error);
@@ -593,7 +607,7 @@
       if (state.stopped) {
         setStatus('⏹️ Script parado pelo usuário');
       } else {
-        setStatus(`✅ Concluído! ${state.total} itens processados`);
+        setStatus(`✅ Concluído! ${state.total} decretos processados`);
       }
     } catch (e) {
       console.error('Erro:', e);
@@ -667,10 +681,10 @@
     state.processed = 0;
     state.errors = 0;
     const startInfo = document.getElementById('m-startinfo');
-    if (startInfo) startInfo.textContent = arquivos.length ? `Total: ${arquivos.length} item(ns) no arquivo` : 'Nenhum dado carregado';
+    if (startInfo) startInfo.textContent = arquivos.length ? `Total: ${arquivos.length} decreto(s) no arquivo` : 'Nenhum dado carregado';
     const btnStart = document.getElementById('m-start');
     if (btnStart) btnStart.disabled = arquivos.length === 0;
-    setStatus(arquivos.length ? `Arquivo carregado: ${arquivos.length} item(ns)` : 'Nenhum dado carregado');
+    setStatus(arquivos.length ? `Arquivo carregado: ${arquivos.length} decreto(s)` : 'Nenhum dado carregado');
     updateStats();
   };
 
