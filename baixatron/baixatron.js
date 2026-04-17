@@ -50,6 +50,8 @@
       tableExpandWaitMs: 900,
       tableExpandMaxClicks: 12,
       tableSweepMaxPages: 25,
+      tableSweepTabs: true,
+      tableSweepMaxTabs: 20,
       rootSelector: null,
       autoDetectIframe: true,
       maxClicks: Infinity,
@@ -265,7 +267,7 @@
       const iconDownload = hasDownloadIcon(el);
       const iconView = hasViewIcon(el);
 
-      const uiKeywords = /fechar|aplicar|cancelar|limpar|remover|ir para|visualizar|adicionar|campo|página|paginação/i;
+      const uiKeywords = /fechar|aplicar|cancelar|limpar|remover|ir para|visualizar|adicionar|campo|p[aá]gina|pagina[cç][aã]o|exportar|export|filtro|pesquisar|buscar/i;
       if (uiKeywords.test(text)) return false;
 
       if (iconView && !iconDownload) return false;
@@ -476,6 +478,7 @@
       if (!root || !root.querySelectorAll) return [];
 
       const pageHint = getCurrentPageNumber();
+      const tabHint = getCurrentTabMarker();
 
       return Array.from(root.querySelectorAll(selectors))
         .filter(el => {
@@ -490,7 +493,7 @@
           const titleName = getRecordTitle(el);
           const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || titleName || '').trim().slice(0, 120);
           const key = keyOf(el, idx, titleName, url);
-          return { el, url, text, titleName, key, idx, sourcePage: pageHint };
+          return { el, url, text, titleName, key, idx, sourcePage: pageHint, sourceTabMarker: tabHint };
         });
     };
 
@@ -547,8 +550,13 @@
       if (el.disabled) return true;
       const ariaDisabled = (el.getAttribute('aria-disabled') || '').toLowerCase();
       if (ariaDisabled === 'true') return true;
-      const cls = norm(el.className || '');
-      return /\b(disabled|is-disabled|btn-disabled)\b/.test(cls);
+      const clsTokens = String(el.className || '')
+        .split(/\s+/)
+        .map(token => token.trim().toLowerCase())
+        .filter(Boolean);
+
+      // Em Tailwind, classes como "disabled:opacity-50" nao significam estado desabilitado atual.
+      return clsTokens.includes('disabled') || clsTokens.includes('is-disabled') || clsTokens.includes('btn-disabled');
     };
 
     const dispatchFormEvents = el => {
@@ -673,7 +681,7 @@
     const getCollectSignature = () => collect(false).map(it => it.key).join('|');
 
     const getPaginationContainers = () => {
-      const selectors = [
+      const containerSelectors = [
         'nav',
         'ul',
         'ol',
@@ -684,9 +692,53 @@
         '[aria-label*="page" i]'
       ].join(',');
 
-      return Array.from(document.querySelectorAll(selectors))
+      const directContainers = Array.from(document.querySelectorAll(containerSelectors));
+      const pageActionControls = Array.from(document.querySelectorAll('button[title], a[title], [role="button"][title], button[aria-label], a[aria-label], [role="button"][aria-label]'))
+        .filter(el => {
+          const label = norm([el.getAttribute('title'), el.getAttribute('aria-label')].filter(Boolean).join(' '));
+          return /(p[aá]gina anterior|p[aá]gina pr[oó]xima|anterior|pr[oó]xim[ao]?|next|prev(?:ious)?)/i.test(label);
+        })
+        .filter(el => !el.closest('#__dl-panel'));
+
+      const nearControlContainers = pageActionControls
+        .map(el => el.closest('nav, section, article, div, ul, ol') || el.parentElement)
+        .filter(Boolean);
+
+      const unique = [];
+      const seen = new Set();
+      for (const el of [...directContainers, ...nearControlContainers]) {
+        if (!el || seen.has(el)) continue;
+        seen.add(el);
+        unique.push(el);
+      }
+
+      return unique
         .filter(el => !el.closest('#__dl-panel'))
         .filter(el => isVisible(el));
+    };
+
+    const isLikelyPaginationControl = el => {
+      if (!el) return false;
+      if (!isVisible(el) || isControlDisabled(el)) return false;
+      if (looksLikeDownload(el)) return false;
+
+      const rawText = (el.innerText || el.textContent || '').trim();
+      const controlText = norm([
+        rawText,
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.getAttribute('rel')
+      ].filter(Boolean).join(' '));
+      const cls = getClassText(el);
+      const idName = norm([el.id, el.getAttribute('name')].filter(Boolean).join(' '));
+
+      const isNumeric = /^\d{1,4}$/.test(rawText);
+      const isDirectional = /(pr[oó]xim[ao]?|next|seguinte|anterior|prev(?:ious)?|voltar|p[aá]gina anterior|p[aá]gina pr[oó]xima|[«‹←»›→])/i.test(controlText);
+      const hasHint = /\b(pagin|page|pager|pagina|p[aá]gina)\b/i.test(controlText) ||
+        /\b(pagin|page|pager|pagina|p[aá]gina)\b/i.test(cls) ||
+        /\b(pagin|page|pager|pagina|p[aá]gina)\b/i.test(idName);
+
+      return isNumeric || isDirectional || hasHint;
     };
 
     const getPaginationControls = container => {
@@ -694,7 +746,8 @@
 
       return Array.from(container.querySelectorAll('button, a, [role="button"]'))
         .filter(el => isVisible(el) && !isControlDisabled(el))
-        .filter(el => !looksLikeDownload(el));
+        .filter(el => !looksLikeDownload(el))
+        .filter(isLikelyPaginationControl);
     };
 
     const getControlText = el => norm([
@@ -709,6 +762,185 @@
       if (!el) return '';
       if (typeof el.className === 'string') return norm(el.className);
       return norm(el.getAttribute('class') || '');
+    };
+
+    const getTabContainers = () => {
+      const selectors = [
+        '[role="tablist"]',
+        '.nav-tabs',
+        '.nav-pills',
+        '[class*="tablist" i]',
+        '[class*="tabs-nav" i]',
+        '[class*="tab-list" i]'
+      ].join(',');
+
+      return Array.from(document.querySelectorAll(selectors))
+        .filter(el => !el.closest('#__dl-panel'))
+        .filter(el => isVisible(el));
+    };
+
+    const isLikelyTabControl = el => {
+      if (!el) return false;
+      if (!isVisible(el) || isControlDisabled(el)) return false;
+      if (el.closest('#__dl-panel')) return false;
+      if (looksLikeDownload(el)) return false;
+
+      const role = (el.getAttribute('role') || '').toLowerCase();
+      const dataToggle = norm([el.getAttribute('data-bs-toggle'), el.getAttribute('data-toggle')].filter(Boolean).join(' '));
+      const ariaControls = (el.getAttribute('aria-controls') || '').trim();
+      const href = (el.getAttribute('href') || '').trim();
+      const classText = getClassText(el);
+      const parent = el.parentElement;
+      const parentClassText = getClassText(parent);
+
+      const hasTabRole = role === 'tab';
+      const hasTabToggle = /\b(tab|pill)\b/i.test(dataToggle);
+      const hasAriaControls = Boolean(ariaControls) && Boolean(document.getElementById(ariaControls));
+      const hashTarget = href.startsWith('#') && href.length > 1 ? document.querySelector(href) : null;
+      const classHint = /\b(tab|tabs|tab-link|tab-btn|nav-link|pill|pills)\b/.test(classText);
+      const parentHint = /\b(tab|tabs|tablist|nav-tabs|nav-pills|pill)\b/.test(parentClassText);
+
+      return hasTabRole || hasTabToggle || hasAriaControls || Boolean(hashTarget) || (classHint && parentHint);
+    };
+
+    const getTabControls = container => {
+      if (!container || !container.querySelectorAll) return [];
+
+      return Array.from(container.querySelectorAll('[role="tab"], button, a, [role="button"]'))
+        .filter(isLikelyTabControl);
+    };
+
+    const isCurrentTabControl = el => {
+      if (!el) return false;
+
+      const ariaSelected = (el.getAttribute('aria-selected') || '').toLowerCase();
+      if (ariaSelected === 'true') return true;
+      if (ariaSelected === 'false') return false;
+
+      const classText = getClassText(el);
+      if (/\b(active|current|selected|is-active|tab-active|show)\b/.test(classText)) return true;
+
+      const ariaControls = (el.getAttribute('aria-controls') || '').trim();
+      if (ariaControls) {
+        const panel = document.getElementById(ariaControls);
+        if (panel && isVisible(panel)) return true;
+      }
+
+      const dataTarget = (el.getAttribute('data-bs-target') || el.getAttribute('data-target') || '').trim();
+      if (dataTarget && dataTarget.startsWith('#')) {
+        const panel = document.querySelector(dataTarget);
+        if (panel && isVisible(panel)) return true;
+      }
+
+      const href = (el.getAttribute('href') || '').trim();
+      if (href.startsWith('#') && href.length > 1) {
+        const panel = document.querySelector(href);
+        if (panel && isVisible(panel)) return true;
+      }
+
+      return false;
+    };
+
+    const getTabControlMarker = el => {
+      if (!el) return '';
+
+      const parent = el.closest('[role="tablist"], .nav-tabs, .nav-pills, [class*="tablist" i], [class*="tabs-nav" i], [class*="tab-list" i]');
+      const parentId = parent?.id || parent?.getAttribute('data-id') || '';
+      const ariaControls = (el.getAttribute('aria-controls') || '').trim();
+      const dataTarget = (el.getAttribute('data-bs-target') || el.getAttribute('data-target') || '').trim();
+      const href = (el.getAttribute('href') || '').trim();
+      const ownId = (el.id || el.getAttribute('data-id') || '').trim();
+      const text = getControlText(el) || getClassText(el) || 'tab-control';
+      const pos = parent ? Array.from(parent.children).indexOf(el) : -1;
+
+      return [
+        'tab',
+        parentId.slice(0, 40),
+        ownId.slice(0, 40),
+        ariaControls.slice(0, 40),
+        dataTarget.slice(0, 40),
+        href.slice(0, 60),
+        text.slice(0, 80),
+        String(pos)
+      ].join(':');
+    };
+
+    const getTabStateMarker = () => {
+      const markers = [];
+      const containers = getTabContainers();
+
+      for (const container of containers) {
+        const controls = getTabControls(container);
+        if (controls.length < 2) continue;
+
+        const active = controls.find(isCurrentTabControl);
+        if (active) {
+          markers.push(getTabControlMarker(active));
+        }
+      }
+
+      return markers.join('|');
+    };
+
+    const getCurrentTabMarker = () => {
+      const containers = getTabContainers();
+      for (const container of containers) {
+        const controls = getTabControls(container);
+        if (controls.length < 2) continue;
+
+        const active = controls.find(isCurrentTabControl);
+        if (active) return getTabControlMarker(active);
+      }
+
+      return '';
+    };
+
+    const getAllTabControls = () => {
+      const dedupe = new Map();
+
+      const containers = getTabContainers();
+      for (const container of containers) {
+        const controls = getTabControls(container);
+        for (const control of controls) {
+          const marker = getTabControlMarker(control);
+          if (!marker || dedupe.has(marker)) continue;
+          dedupe.set(marker, control);
+        }
+      }
+
+      return Array.from(dedupe.values());
+    };
+
+    const findTabControlByMarker = marker => {
+      if (!marker) return null;
+      return getAllTabControls().find(control => getTabControlMarker(control) === marker) || null;
+    };
+
+    const goToTabMarker = async marker => {
+      if (!marker) return false;
+
+      const currentMarker = getCurrentTabMarker();
+      if (currentMarker && currentMarker === marker) return true;
+
+      const control = findTabControlByMarker(marker);
+      if (!control) return false;
+
+      const beforeSig = getCollectSignature();
+      const beforeStateMarker = getViewStateMarker();
+
+      if (typeof control.click === 'function') {
+        control.click();
+      } else {
+        control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      }
+
+      const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforeStateMarker);
+      if (changed) {
+        await waitForCollectSettled(opts.tableExpandWaitMs * 6);
+      }
+
+      const afterMarker = getCurrentTabMarker();
+      return changed || (afterMarker && afterMarker === marker);
     };
 
     const getControlPageNumber = el => {
@@ -735,6 +967,12 @@
       const ownClass = getClassText(el);
       if (/\b(active|current|selected|is-active|page-active)\b/.test(ownClass)) return true;
 
+      const ownPage = getControlPageNumber(el);
+      if (Number.isFinite(ownPage)) {
+        const highlighted = /\b(bg-gradient-to-r|text-white|scale-105)\b/.test(ownClass) && !/\bbg-white\b/.test(ownClass);
+        if (highlighted) return true;
+      }
+
       const parent = el.parentElement;
       if (!parent) return false;
 
@@ -742,7 +980,14 @@
       if (parentAriaCurrent === 'page' || parentAriaCurrent === 'true') return true;
 
       const parentClass = getClassText(parent);
-      return /\b(active|current|selected|is-active|page-active)\b/.test(parentClass);
+      if (/\b(active|current|selected|is-active|page-active)\b/.test(parentClass)) return true;
+
+      if (Number.isFinite(ownPage)) {
+        const parentHighlighted = /\b(bg-gradient-to-r|text-white|scale-105)\b/.test(parentClass) && !/\bbg-white\b/.test(parentClass);
+        if (parentHighlighted) return true;
+      }
+
+      return false;
     };
 
     const getControlMarker = el => {
@@ -771,6 +1016,8 @@
 
       return markers.join('|');
     };
+
+    const getViewStateMarker = () => [getPaginationStateMarker(), getTabStateMarker()].filter(Boolean).join('|');
 
     const getCurrentPageNumber = () => {
       const containers = getPaginationContainers();
@@ -811,7 +1058,7 @@
       if (!control) return false;
 
       const beforeSig = getCollectSignature();
-      const beforePageMarker = getPaginationStateMarker();
+      const beforeStateMarker = getViewStateMarker();
 
       if (typeof control.click === 'function') {
         control.click();
@@ -819,7 +1066,7 @@
         control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
       }
 
-      const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforePageMarker);
+      const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforeStateMarker);
       if (changed) {
         await waitForCollectSettled(opts.tableExpandWaitMs * 6);
       }
@@ -828,16 +1075,16 @@
       return Number.isFinite(afterPage) && afterPage === pageNumber;
     };
 
-    const waitForCollectChange = async (previousSignature, timeoutMs, previousPageMarker = '') => {
+    const waitForCollectChange = async (previousSignature, timeoutMs, previousStateMarker = '') => {
       const startedAt = Date.now();
       while (Date.now() - startedAt < timeoutMs) {
         await wait(250);
         const nextSignature = getCollectSignature();
         if (nextSignature !== previousSignature) return true;
 
-        if (previousPageMarker) {
-          const nextPageMarker = getPaginationStateMarker();
-          if (nextPageMarker !== previousPageMarker) return true;
+        if (previousStateMarker) {
+          const nextStateMarker = getViewStateMarker();
+          if (nextStateMarker !== previousStateMarker) return true;
         }
       }
       return false;
@@ -1000,7 +1247,8 @@
       const controls = Array.from(document.querySelectorAll('button, a, [role="button"]'))
         .filter(el => !el.closest('#__dl-panel'))
         .filter(el => isVisible(el) && !isControlDisabled(el))
-        .filter(el => !looksLikeDownload(el));
+        .filter(el => !looksLikeDownload(el))
+        .filter(isLikelyPaginationControl);
       return pickFromControls(controls);
     };
 
@@ -1010,13 +1258,15 @@
 
       const addCurrentPageItems = (items = null) => {
         const currentPage = getCurrentPageNumber();
+        const currentTabMarker = getCurrentTabMarker();
         const source = items || collect(false);
         for (const item of source) {
           const enriched = {
             ...item,
             sourcePage: Number.isFinite(item.sourcePage)
               ? item.sourcePage
-              : (Number.isFinite(currentPage) ? currentPage : NaN)
+              : (Number.isFinite(currentPage) ? currentPage : NaN),
+            sourceTabMarker: item.sourceTabMarker || currentTabMarker || ''
           };
 
           if (!allItems.has(item.key)) {
@@ -1037,8 +1287,13 @@
           if (!nextControl) break;
 
           const beforeSig = getCollectSignature();
-          const beforePageMarker = getPaginationStateMarker();
+          const beforeStateMarker = getViewStateMarker();
           const marker = getControlMarker(nextControl);
+          const controlLabel = (nextControl.innerText || nextControl.textContent || nextControl.getAttribute('aria-label') || nextControl.getAttribute('title') || '').trim();
+
+          if (opts.verbose) {
+            console.log('[BAIXATRON] 🔄 Tentando paginacao:', controlLabel || '(sem texto)', '| marker:', marker);
+          }
 
           if (typeof nextControl.click === 'function') {
             nextControl.click();
@@ -1047,8 +1302,11 @@
           }
           clickedMarkers.add(marker);
 
-          const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforePageMarker);
+          const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforeStateMarker);
           if (!changed) {
+            if (opts.verbose) {
+              console.warn('[BAIXATRON] ⚠️ Clique de paginacao sem mudanca detectada:', controlLabel || '(sem texto)', '| marker:', marker);
+            }
             continue;
           }
 
@@ -1064,6 +1322,121 @@
 
       return {
         items: Array.from(allItems.values()),
+        movedPages
+      };
+    };
+
+    const findNextTabControl = (clickedMarkers = new Set()) => {
+      const pickFromControls = controls => {
+        if (!controls || controls.length < 2) return null;
+
+        const activeIndex = controls.findIndex(isCurrentTabControl);
+        if (activeIndex >= 0) {
+          for (let i = activeIndex + 1; i < controls.length; i++) {
+            const candidate = controls[i];
+            const marker = getTabControlMarker(candidate);
+            if (!marker || clickedMarkers.has(marker)) continue;
+            if (isCurrentTabControl(candidate)) continue;
+            return candidate;
+          }
+        }
+
+        const anyInactive = controls.find(candidate => {
+          const marker = getTabControlMarker(candidate);
+          if (!marker || clickedMarkers.has(marker)) return false;
+          return !isCurrentTabControl(candidate);
+        });
+
+        return anyInactive || null;
+      };
+
+      const containers = getTabContainers();
+      for (const container of containers) {
+        const controls = getTabControls(container);
+        const picked = pickFromControls(controls);
+        if (picked) return picked;
+      }
+
+      return pickFromControls(getAllTabControls());
+    };
+
+    const collectCurrentViewDeep = async () => {
+      const loadMoreClicks = await clickLoadMoreControls();
+      const pagedResult = await collectThroughPagination();
+      const items = pagedResult.items.length ? pagedResult.items : collect(false);
+
+      return {
+        items,
+        loadMoreClicks,
+        movedPages: pagedResult.movedPages
+      };
+    };
+
+    const collectThroughTabsAndPagination = async () => {
+      const allItems = new Map();
+      const clickedTabMarkers = new Set();
+
+      let switchedTabs = 0;
+      let loadMoreClicks = 0;
+      let movedPages = 0;
+
+      const addItems = items => {
+        for (const item of items || []) {
+          if (!allItems.has(item.key)) {
+            allItems.set(item.key, item);
+          }
+        }
+      };
+
+      const collectCurrentTabView = async () => {
+        const deep = await collectCurrentViewDeep();
+        addItems(deep.items);
+        loadMoreClicks += deep.loadMoreClicks;
+        movedPages += deep.movedPages;
+      };
+
+      await collectCurrentTabView();
+
+      if (!opts.tableSweepTabs) {
+        return {
+          items: Array.from(allItems.values()),
+          switchedTabs,
+          loadMoreClicks,
+          movedPages
+        };
+      }
+
+      for (let i = 0; i < opts.tableSweepMaxTabs; i++) {
+        const nextTab = findNextTabControl(clickedTabMarkers);
+        if (!nextTab) break;
+
+        const marker = getTabControlMarker(nextTab);
+        if (!marker) break;
+        clickedTabMarkers.add(marker);
+
+        if (isCurrentTabControl(nextTab)) continue;
+
+        const beforeSig = getCollectSignature();
+        const beforeStateMarker = getViewStateMarker();
+
+        if (typeof nextTab.click === 'function') {
+          nextTab.click();
+        } else {
+          nextTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+
+        const changed = await waitForCollectChange(beforeSig, opts.tableExpandWaitMs * 6, beforeStateMarker);
+        if (!changed) continue;
+
+        switchedTabs++;
+        await waitForCollectSettled(opts.tableExpandWaitMs * 6);
+        await collectCurrentTabView();
+      }
+
+      return {
+        items: Array.from(allItems.values()),
+        switchedTabs,
+        loadMoreClicks,
         movedPages
       };
     };
@@ -1201,14 +1574,13 @@
       updateUI();
 
       try {
-        console.log('[BAIXATRON] 🧩 Tentando expandir tabela e paginação...');
+        console.log('[BAIXATRON] 🧩 Tentando expandir tabela, abas e paginação...');
         const baselineItems = collect(false);
 
         const changedSelects = await expandRowsPerPage();
-        const loadMoreClicks = await clickLoadMoreControls();
-        const pagedResult = await collectThroughPagination();
+        const sweepResult = await collectThroughTabsAndPagination();
 
-        let finalItems = pagedResult.items.length ? pagedResult.items : collect(false);
+        let finalItems = sweepResult.items.length ? sweepResult.items : collect(false);
         if (finalItems.length === 0 && baselineItems.length > 0) {
           console.warn('[BAIXATRON] ⚠️ Expansão zerou a coleta. Mantendo itens da coleta inicial para evitar perda de fila.');
           finalItems = baselineItems;
@@ -1218,8 +1590,9 @@
         console.log(
           '[BAIXATRON] ✅ Expansão finalizada | itens:', finalItems.length,
           '| selects alterados:', changedSelects,
-          '| cliques em "mais":', loadMoreClicks,
-          '| páginas percorridas:', pagedResult.movedPages,
+          '| abas percorridas:', sweepResult.switchedTabs,
+          '| cliques em "mais":', sweepResult.loadMoreClicks,
+          '| páginas percorridas:', sweepResult.movedPages,
           '| adicionados:', stats.added,
           '| pulados:', stats.skipped
         );
@@ -1275,6 +1648,14 @@
     };
 
     const ensureItemPageVisible = async it => {
+      const targetTabMarker = it?.sourceTabMarker;
+      if (targetTabMarker) {
+        const movedTab = await goToTabMarker(targetTabMarker);
+        if (!movedTab && opts.verbose) {
+          console.warn('[BAIXATRON] ⚠️ Não foi possível navegar para a aba do item:', it?.text || it?.titleName);
+        }
+      }
+
       const targetPage = it?.sourcePage;
       if (!Number.isFinite(targetPage)) return;
 
