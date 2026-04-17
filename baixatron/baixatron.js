@@ -52,6 +52,9 @@
       tableSweepMaxPages: 25,
       tableSweepTabs: true,
       tableSweepMaxTabs: 20,
+      folderSweepEnabled: true,
+      folderExpandWaitMs: 450,
+      folderExpandMaxClicks: 400,
       rootSelector: null,
       autoDetectIframe: true,
       maxClicks: Infinity,
@@ -77,6 +80,65 @@
       .split(/[\n,;|]+/)
       .map(term => term.trim())
       .filter(Boolean);
+
+    const FILE_TYPE_ALIAS = {
+      pdf: 'pdf',
+      csv: 'csv',
+      doc: 'doc',
+      docx: 'docx',
+      word: 'doc',
+      xls: 'xls',
+      xlsx: 'xlsx',
+      excel: 'xls',
+      xml: 'xml',
+      txt: 'txt',
+      text: 'txt',
+      rtf: 'rtf',
+      zip: 'zip',
+      rar: 'rar',
+      '7z': '7z',
+      odt: 'odt',
+      ods: 'ods',
+      ppt: 'ppt',
+      pptx: 'pptx'
+    };
+
+    const normalizeFileTypeToken = raw => {
+      const cleaned = normLoose(raw || '')
+        .replace(/^\.+/, '')
+        .replace(/[^a-z0-9]+/g, '');
+
+      if (!cleaned) return '';
+      return FILE_TYPE_ALIAS[cleaned] || '';
+    };
+
+    const parseTypeFilterTerms = raw => {
+      const terms = parseNameFilterTerms(raw);
+      const tokens = new Set();
+
+      const knownRegex = /\b(pdf|csv|docx?|xlsx?|xls|xml|txt|text|rtf|zip|rar|7z|odt|ods|pptx?|excel|word)\b/g;
+
+      for (const term of terms) {
+        const loose = normLoose(term)
+          .replace(/^\s*(tipo|type)\s*[:#=\-]?\s*/i, '')
+          .trim();
+
+        const direct = normalizeFileTypeToken(loose);
+        if (direct) {
+          tokens.add(direct);
+          continue;
+        }
+
+        knownRegex.lastIndex = 0;
+        let match;
+        while ((match = knownRegex.exec(loose)) !== null) {
+          const normalized = normalizeFileTypeToken(match[1]);
+          if (normalized) tokens.add(normalized);
+        }
+      }
+
+      return Array.from(tokens);
+    };
 
     const parseFilterCriteria = raw => {
       const terms = parseNameFilterTerms(raw);
@@ -181,6 +243,70 @@
       } catch {
         return '';
       }
+    };
+
+    const splitFileNameExt = fileName => {
+      const raw = String(fileName || '').trim();
+      if (!raw) return { base: '', ext: '' };
+
+      const extMatch = raw.match(/\.([a-z0-9]{2,5})$/i);
+      if (!extMatch || !extMatch[1]) {
+        return { base: raw, ext: '' };
+      }
+
+      const base = raw.slice(0, -extMatch[0].length).trim();
+      const ext = normalizeFileTypeToken(extMatch[1]) || extMatch[1].toLowerCase();
+      return { base, ext };
+    };
+
+    const cleanRecordLabel = raw => {
+      let text = String(raw || '').replace(/\s+/g, ' ').trim();
+      if (!text) return '';
+
+      // Remove sufixo de data de publicacao quando existir.
+      text = text.replace(/\s*-\s*publicado em.*$/i, '').trim();
+      return text;
+    };
+
+    const normalizeFileSegment = (raw, compact = false) => {
+      let text = cleanRecordLabel(raw);
+      if (!text) return '';
+
+      text = text
+        .replace(/[\\/:*?"<>|]/g, '')
+        .replace(/[_]+/g, '_')
+        .trim();
+
+      if (compact) {
+        text = text.replace(/\s+/g, '');
+      } else {
+        text = text.replace(/\s+/g, ' ');
+      }
+
+      return text.replace(/^[_\-. ]+|[_\-. ]+$/g, '').trim();
+    };
+
+    const isLikelyRandomBaseName = rawBase => {
+      const base = normLoose(rawBase || '');
+      if (!base) return true;
+
+      if (/^(download|arquivo|file|document|documento|anexo)$/i.test(base)) return true;
+      if (/^\d{6,}$/.test(base)) return true;
+      if (/^[a-f0-9]{16,}$/i.test(base)) return true;
+
+      // Tokens longos alfanumericos sem separadores geralmente sao IDs/hash.
+      if (/^[a-z0-9]{14,}$/i.test(base) && /[a-z]/i.test(base) && /\d/.test(base) && !/[_\- ]/.test(base)) {
+        return true;
+      }
+
+      if (base.length >= 24 && !/[_\- ]/.test(base)) return true;
+      return false;
+    };
+
+    const isGenericDownloadTitle = rawTitle => {
+      const title = normLoose(rawTitle || '');
+      if (!title) return true;
+      return /(baixe|baixar|download|arquivo em|clique aqui|visualizar|abrir arquivo)/i.test(title);
     };
 
     const blobLooksLikeHtml = async blob => {
@@ -318,6 +444,54 @@
         }
       }
 
+      // Estrutura em arvore (ano/mes) com bloco .isFileLink.
+      const fileLinkBlock = el.closest('.isFileLink');
+      if (fileLinkBlock) {
+        const blockText = cleanRecordLabel(fileLinkBlock.textContent || '');
+        if (blockText) return blockText;
+      }
+
+      return '';
+    };
+
+    const getFolderHierarchyFromElement = el => {
+      if (!el || !el.closest) return [];
+
+      const folders = [];
+      let node = el.closest('li');
+
+      while (node) {
+        if (node.classList && node.classList.contains('has-children')) {
+          let label = null;
+          try {
+            label = node.querySelector(':scope > label');
+          } catch {
+            label = node.querySelector('label');
+          }
+
+          const labelText = normalizeFileSegment(label?.textContent || '', true);
+          if (labelText) folders.push(labelText);
+        }
+
+        const parentUl = node.parentElement;
+        node = parentUl && parentUl.closest ? parentUl.closest('li') : null;
+      }
+
+      return folders.reverse();
+    };
+
+    const getContextFileTitleFromElement = el => {
+      if (!el || !el.closest) return '';
+
+      const fileLinkBlock = el.closest('.isFileLink');
+      if (fileLinkBlock) {
+        const blockText = cleanRecordLabel(fileLinkBlock.textContent || '');
+        if (blockText) return blockText;
+      }
+
+      const liText = cleanRecordLabel(el.closest('li')?.textContent || '');
+      if (liText) return liText;
+
       return '';
     };
 
@@ -378,6 +552,142 @@
       }
 
       return '';
+    };
+
+    const inferFileTypeFromUrl = url => {
+      if (!url) return '';
+
+      try {
+        const parsed = new URL(url, document.baseURI);
+        const pathname = (parsed.pathname || '').toLowerCase();
+
+        const downloadPath = pathname.match(/\/download\/([a-z0-9]+)\//i);
+        if (downloadPath && downloadPath[1]) {
+          const pathType = normalizeFileTypeToken(downloadPath[1]);
+          if (pathType) return pathType;
+        }
+
+        const extMatch = pathname.match(/\.([a-z0-9]{2,5})(?:$|\?)/i);
+        if (extMatch && extMatch[1]) {
+          const extType = normalizeFileTypeToken(extMatch[1]);
+          if (extType) return extType;
+        }
+
+        const paramCandidates = [
+          parsed.searchParams.get('type'),
+          parsed.searchParams.get('format'),
+          parsed.searchParams.get('ext'),
+          parsed.searchParams.get('filetype')
+        ];
+
+        for (const raw of paramCandidates) {
+          const token = normalizeFileTypeToken(raw || '');
+          if (token) return token;
+        }
+      } catch {
+        const fallbackExt = String(url).toLowerCase().match(/\.([a-z0-9]{2,5})(?:$|\?)/i);
+        if (fallbackExt && fallbackExt[1]) {
+          const extType = normalizeFileTypeToken(fallbackExt[1]);
+          if (extType) return extType;
+        }
+      }
+
+      return '';
+    };
+
+    const inferFileTypeFromElement = (el, resolvedUrl = '') => {
+      const byUrl = inferFileTypeFromUrl(resolvedUrl || extractDownloadUrl(el));
+      if (byUrl) return byUrl;
+
+      const imgSrc = el?.querySelector?.('img')?.getAttribute?.('src') || '';
+      const iconClass = el?.querySelector?.('i,svg')?.getAttribute?.('class') || '';
+
+      const hint = normLoose([
+        el?.innerText,
+        el?.textContent,
+        el?.getAttribute?.('aria-label'),
+        el?.getAttribute?.('title'),
+        el?.getAttribute?.('class'),
+        el?.getAttribute?.('onclick'),
+        imgSrc,
+        iconClass
+      ].filter(Boolean).join(' '));
+
+      const rules = [
+        ['pdf', /\bpdf\b|pdf-icon/],
+        ['csv', /\bcsv\b/],
+        ['doc', /\bdoc\b|\bword\b|doc-icon/],
+        ['docx', /\bdocx\b/],
+        ['xls', /\bxls\b|\bexcel\b|excel-icon/],
+        ['xlsx', /\bxlsx\b/],
+        ['xml', /\bxml\b|xml-icon/],
+        ['txt', /\btxt\b|\btext\b|txt-icon/],
+        ['rtf', /\brtf\b/],
+        ['zip', /\bzip\b/],
+        ['rar', /\brar\b/],
+        ['7z', /\b7z\b/],
+        ['odt', /\bodt\b/],
+        ['ods', /\bods\b/],
+        ['ppt', /\bppt\b/],
+        ['pptx', /\bpptx\b/]
+      ];
+
+      for (const [type, rx] of rules) {
+        if (rx.test(hint)) return type;
+      }
+
+      return '';
+    };
+
+    const resolveDownloadFileName = (it, suggestedName, titleFallback, liveEl) => {
+      const el = liveEl || it?.el;
+      const folders = getFolderHierarchyFromElement(el);
+
+      const candidate = String(suggestedName || '').trim();
+      const candidateParts = splitFileNameExt(candidate);
+      const fallbackParts = splitFileNameExt(titleFallback || '');
+
+      const hasFolderContext = folders.length >= 2;
+      const shouldUseHierarchy = hasFolderContext && isLikelyRandomBaseName(candidateParts.base || '');
+
+      let preferredTitle = cleanRecordLabel(it?.titleName || '');
+      if (!preferredTitle) preferredTitle = cleanRecordLabel(getContextFileTitleFromElement(el));
+      if (!preferredTitle) preferredTitle = cleanRecordLabel(titleFallback || '');
+
+      if (shouldUseHierarchy && !isGenericDownloadTitle(preferredTitle)) {
+        const preferredParts = splitFileNameExt(preferredTitle);
+        const titleBase = normalizeFileSegment(preferredParts.base || preferredTitle, false);
+        const folderBase = folders
+          .map(segment => normalizeFileSegment(segment, true))
+          .filter(Boolean)
+          .join('_');
+
+        if (folderBase && titleBase) {
+          const ext =
+            preferredParts.ext ||
+            candidateParts.ext ||
+            inferFileTypeFromUrl(it?.url) ||
+            normalizeFileTypeToken(it?.fileType) ||
+            'pdf';
+
+          return sanitizeFileName(`${folderBase}_${titleBase}`, ext);
+        }
+      }
+
+      let fallbackName = candidate;
+      if (!fallbackName || fallbackName.length < 3) {
+        fallbackName = preferredTitle || titleFallback || 'download';
+      }
+
+      const extHint =
+        splitFileNameExt(fallbackName).ext ||
+        fallbackParts.ext ||
+        candidateParts.ext ||
+        inferFileTypeFromUrl(it?.url) ||
+        normalizeFileTypeToken(it?.fileType) ||
+        'pdf';
+
+      return sanitizeFileName(fallbackName, extHint);
     };
 
     const keyOf = (el, idx, fallbackText = '', resolvedUrl = '') => {
@@ -492,8 +802,9 @@
           const url = extractDownloadUrl(el);
           const titleName = getRecordTitle(el);
           const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || titleName || '').trim().slice(0, 120);
+          const fileType = inferFileTypeFromElement(el, url);
           const key = keyOf(el, idx, titleName, url);
-          return { el, url, text, titleName, key, idx, sourcePage: pageHint, sourceTabMarker: tabHint };
+          return { el, url, text, titleName, fileType, key, idx, sourcePage: pageHint, sourceTabMarker: tabHint };
         });
     };
 
@@ -1157,6 +1468,147 @@
       return clicks;
     };
 
+    const folderDownloadSelector = [
+      '.isFileLink',
+      'a[download]',
+      'a[href*="/download/"]',
+      'a[href$=".pdf" i]',
+      'a[href$=".csv" i]',
+      'a[href$=".doc" i]',
+      'a[href$=".docx" i]',
+      'a[href$=".xml" i]',
+      'a[href$=".txt" i]'
+    ].join(',');
+
+    const isFolderContainerLoaded = container => {
+      if (!container || !container.querySelector) return false;
+      return Boolean(container.querySelector(folderDownloadSelector));
+    };
+
+    const getFolderContainerSignature = container => {
+      if (!container || !container.querySelectorAll) return '';
+
+      const totalItems = container.querySelectorAll('li').length;
+      const totalFiles = container.querySelectorAll(folderDownloadSelector).length;
+      const textSize = (container.textContent || '').trim().length;
+      return `${totalItems}|${totalFiles}|${textSize}`;
+    };
+
+    const waitForFolderContainerChange = async (container, previousSignature, timeoutMs) => {
+      const startedAt = Date.now();
+
+      while (Date.now() - startedAt < timeoutMs) {
+        await wait(220);
+        const nextSignature = getFolderContainerSignature(container);
+        if (nextSignature !== previousSignature) return true;
+      }
+
+      return false;
+    };
+
+    const getFolderToggleCheckbox = toggle => {
+      if (!toggle || !toggle.getAttribute) return null;
+
+      const forId = (toggle.getAttribute('for') || '').trim();
+      if (forId) {
+        const linked = document.getElementById(forId);
+        if (linked && linked.tagName === 'INPUT' && (linked.type || '').toLowerCase() === 'checkbox') {
+          return linked;
+        }
+      }
+
+      const prev = toggle.previousElementSibling;
+      if (prev && prev.tagName === 'INPUT' && (prev.type || '').toLowerCase() === 'checkbox') {
+        return prev;
+      }
+
+      return null;
+    };
+
+    const getFolderExpandCandidates = attemptedMarkers => {
+      const containers = Array.from(document.querySelectorAll('.has-file-on-it'))
+        .filter(container => !container.closest('#__dl-panel'));
+
+      const candidates = [];
+
+      for (const container of containers) {
+        const toggle = container.previousElementSibling;
+        if (!toggle || !toggle.getAttribute) continue;
+        if (toggle.closest && toggle.closest('#__dl-panel')) continue;
+
+        const tag = (toggle.tagName || '').toUpperCase();
+        const role = (toggle.getAttribute('role') || '').toLowerCase();
+        const isToggleLike = tag === 'LABEL' || tag === 'A' || tag === 'BUTTON' || role === 'button';
+        if (!isToggleLike) continue;
+
+        const marker =
+          toggle.getAttribute('data-path') ||
+          toggle.getAttribute('for') ||
+          `${norm(toggle.textContent || '').slice(0, 120)}|${container.childElementCount}`;
+
+        if (!marker || attemptedMarkers.has(marker)) continue;
+
+        const checkbox = getFolderToggleCheckbox(toggle);
+        const loaded = isFolderContainerLoaded(container);
+
+        // Se ja esta aberto, nao clicar para evitar colapsar novamente.
+        if (checkbox && checkbox.checked) continue;
+
+        // Sem checkbox e sem arquivos novos para carregar: ignora.
+        if (!checkbox && loaded) continue;
+
+        candidates.push({ marker, toggle, checkbox, container, loaded });
+      }
+
+      return candidates;
+    };
+
+    const expandFolderTrees = async () => {
+      let openedFolders = 0;
+      let ajaxClicks = 0;
+      let loadedFolders = 0;
+      const attemptedMarkers = new Set();
+
+      while (attemptedMarkers.size < opts.folderExpandMaxClicks) {
+        const candidates = getFolderExpandCandidates(attemptedMarkers);
+        if (candidates.length === 0) break;
+
+        const target = candidates[0];
+        attemptedMarkers.add(target.marker);
+
+        // Caso ja tenha arquivos carregados, apenas expande visualmente sem novo request.
+        if (target.checkbox && target.loaded) {
+          target.checkbox.checked = true;
+          dispatchFormEvents(target.checkbox);
+          openedFolders++;
+          await wait(Math.max(100, Math.floor(opts.folderExpandWaitMs / 2)));
+          continue;
+        }
+
+        const beforeSignature = getFolderContainerSignature(target.container);
+
+        if (typeof target.toggle.click === 'function') {
+          target.toggle.click();
+        } else {
+          target.toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+
+        ajaxClicks++;
+
+        const changed = await waitForFolderContainerChange(target.container, beforeSignature, opts.folderExpandWaitMs * 8);
+        if (changed) loadedFolders++;
+
+        await wait(Math.max(120, opts.folderExpandWaitMs));
+      }
+
+      return {
+        attempted: attemptedMarkers.size,
+        openedFolders,
+        ajaxClicks,
+        loadedFolders
+      };
+    };
+
     const findNextPaginationControl = (clickedMarkers = new Set()) => {
       const nextRegex = /(pr[oó]xim[ao]?|next|seguinte|avan[cç]ar|pr[oó]x\b|[»›→])/i;
       const prevRegex = /(anterior|prev(?:ious)?|voltar|[«‹←])/i;
@@ -1567,6 +2019,98 @@
       };
     };
 
+    const applyQueueTypeFilter = (mode, rawInput = null) => {
+      if (mode !== 'keep' && mode !== 'remove') {
+        alert('[BAIXATRON] Modo de filtro de tipo invalido. Use keep ou remove.');
+        return null;
+      }
+
+      if (state.running) {
+        alert('[BAIXATRON] Pause os downloads antes de aplicar filtros por tipo.');
+        return null;
+      }
+
+      if (state.queue.length === 0) {
+        alert('[BAIXATRON] A fila esta vazia. Use [⊙] Escanear primeiro.');
+        return null;
+      }
+
+      const actionLabel = mode === 'keep' ? 'manter' : 'remover';
+      const raw = typeof rawInput === 'string'
+        ? rawInput
+        : prompt(
+          `[BAIXATRON] Digite os tipos para ${actionLabel} da checklist.\n` +
+          'Exemplos: pdf, csv, doc, xml, txt, xls, zip.'
+        );
+
+      if (raw === null) return null;
+
+      const types = parseTypeFilterTerms(raw);
+      if (!types.length) {
+        alert('[BAIXATRON] Nenhum tipo valido informado. Exemplos: pdf, csv, doc, xml, txt.');
+        return null;
+      }
+
+      const totalBefore = state.queue.length;
+      const nextQueue = [];
+      let matched = 0;
+
+      for (const it of state.queue) {
+        const itemType = normalizeFileTypeToken(it.fileType) || inferFileTypeFromUrl(it.url) || inferFileTypeFromElement(it.el, it.url);
+        it.fileType = itemType;
+
+        const isMatch = Boolean(itemType) && types.includes(itemType);
+        if (isMatch) matched++;
+
+        const shouldKeep = mode === 'keep' ? isMatch : !isMatch;
+        if (shouldKeep) {
+          nextQueue.push(it);
+        } else {
+          state.selectedKeys.delete(it.key);
+        }
+      }
+
+      state.queue = nextQueue;
+      state.queuedKeys.clear();
+      for (const it of state.queue) {
+        state.queuedKeys.add(it.key);
+      }
+
+      const queueKeys = new Set(state.queue.map(it => it.key));
+      state.selectedKeys.forEach(key => {
+        if (!queueKeys.has(key)) state.selectedKeys.delete(key);
+      });
+
+      const totalAfter = nextQueue.length;
+      const removedCount = Math.max(0, totalBefore - totalAfter);
+
+      updateUI();
+
+      console.log(
+        '[BAIXATRON] 🧪 Filtro por tipo aplicado | modo:', mode,
+        '| tipos:', types.join(', '),
+        '| correspondencias:', matched,
+        '| removidos da fila:', removedCount,
+        '| restantes:', totalAfter
+      );
+
+      alert(
+        `[BAIXATRON] Filtro por tipo aplicado (${mode === 'keep' ? 'manter' : 'remover'}).\n` +
+        `Tipos: ${types.join(', ')}\n` +
+        `Correspondencias: ${matched}\n` +
+        `Removidos da checklist: ${removedCount}\n` +
+        `Restantes: ${totalAfter}`
+      );
+
+      return {
+        mode,
+        types,
+        matched,
+        removedCount,
+        remaining: totalAfter
+      };
+    };
+
     const expandTable = async () => {
       if (state.running || state.expandingTable) return [];
 
@@ -1578,6 +2122,9 @@
         const baselineItems = collect(false);
 
         const changedSelects = await expandRowsPerPage();
+        const folderResult = opts.folderSweepEnabled
+          ? await expandFolderTrees()
+          : { attempted: 0, openedFolders: 0, ajaxClicks: 0, loadedFolders: 0 };
         const sweepResult = await collectThroughTabsAndPagination();
 
         let finalItems = sweepResult.items.length ? sweepResult.items : collect(false);
@@ -1590,6 +2137,10 @@
         console.log(
           '[BAIXATRON] ✅ Expansão finalizada | itens:', finalItems.length,
           '| selects alterados:', changedSelects,
+          '| pastas processadas:', folderResult.attempted,
+          '| pastas abertas:', folderResult.openedFolders,
+          '| cliques AJAX em pastas:', folderResult.ajaxClicks,
+          '| pastas carregadas:', folderResult.loadedFolders,
           '| abas percorridas:', sweepResult.switchedTabs,
           '| cliques em "mais":', sweepResult.loadMoreClicks,
           '| páginas percorridas:', sweepResult.movedPages,
@@ -1615,7 +2166,21 @@
     // ============================================
     // SCAN: Lista todos os downloads
     // ============================================
-    const scan = () => {
+    const scan = async () => {
+      let folderResult = { attempted: 0, openedFolders: 0, ajaxClicks: 0, loadedFolders: 0 };
+
+      if (opts.folderSweepEnabled) {
+        folderResult = await expandFolderTrees();
+        if (folderResult.attempted > 0) {
+          console.log(
+            '[BAIXATRON] 🗂️ Pastas processadas no scan:', folderResult.attempted,
+            '| abertas:', folderResult.openedFolders,
+            '| cliques AJAX:', folderResult.ajaxClicks,
+            '| carregadas:', folderResult.loadedFolders
+          );
+        }
+      }
+
       const items = collect();
       console.log('[BAIXATRON] 📊 Coleta: encontrados', items.length, 'botões únicos');
 
@@ -1725,12 +2290,8 @@
         let fileName = fileNameFromContentDisposition(response.headers.get('content-disposition'));
         if (!fileName) fileName = fileNameFromUrl(response.url || url);
         if (!fileName) fileName = fileNameFromUrl(url);
-        
-        // Se não conseguiu nome válido, usar titulo/texto do registro escaneado.
-        if (!fileName || fileName.length < 3) {
-          fileName = titleFallback;
-        }
-        fileName = sanitizeFileName(fileName, 'pdf');
+
+        fileName = resolveDownloadFileName(it, fileName, titleFallback, el);
         
         // Criar elemento <a> com blob URL
         const a = document.createElement('a');
@@ -1771,11 +2332,8 @@
           a.href = url;
           
           let fileName = fileNameFromUrl(url);
-          
-          if (!fileName || fileName.length < 3) {
-            fileName = titleFallback;
-          }
-          fileName = sanitizeFileName(fileName, 'pdf');
+
+          fileName = resolveDownloadFileName(it, fileName, titleFallback, el);
           
           a.download = fileName;
           a.style.display = 'none';
@@ -1886,7 +2444,7 @@
     // ============================================
     const start = async () => {
       if (state.running) return;
-      if (!state.queue.length) scan();
+      if (!state.queue.length) await scan();
       
       if (state.queue.length === 0) {
         alert('[BAIXATRON] Nenhum arquivo na fila. Execute scan() primeiro.');
@@ -2034,6 +2592,7 @@
       start, stop, reset, scan, clearHistory,
       expandTable,
       applyQueueNameFilter,
+      applyQueueTypeFilter,
       openBlockedFrames,
       selectAll, deselectAll, toggleSelect,
       setOptions, opts, state,
@@ -2227,6 +2786,12 @@
 
       #__dl-panel.light-mode .download-icon {
         color: #666666;
+      }
+
+      #__dl-panel.light-mode .download-type {
+        background: #e9ecef;
+        border-color: #ced4da;
+        color: #495057;
       }
 
       #__dl-panel.light-mode .speed-control {
@@ -2465,6 +3030,20 @@
         color: #888888;
         min-width: 12px;
         text-align: center;
+      }
+
+      .download-type {
+        min-width: 40px;
+        text-align: center;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+        padding: 2px 6px;
+        border-radius: 10px;
+        background: #1f2937;
+        border: 1px solid #374151;
+        color: #d1d5db;
       }
 
       .download-item.done .download-icon {
@@ -2740,6 +3319,8 @@
         const isProcessing = state.running && idx === 0;
         const isDone = state.doneKeys.has(it.key);
         const displayId = String(it.itemId || (idx + 1)).padStart(4, '0');
+        const itemType = normalizeFileTypeToken(it.fileType) || inferFileTypeFromUrl(it.url) || inferFileTypeFromElement(it.el, it.url) || 'n/a';
+        it.fileType = itemType;
 
         const item = document.createElement('div');
         item.className = 'download-item';
@@ -2749,6 +3330,7 @@
         item.innerHTML = `
           <input type="checkbox" class="download-checkbox" ${isSelected ? 'checked' : ''}>
           <span class="download-id">ID ${displayId}</span>
+          <span class="download-type">${itemType}</span>
           <span class="download-name" title="${it.text || ''}">${it.text || '(sem nome)'}</span>
           <span class="download-icon">${isDone ? '[✓]' : isProcessing ? '[~]' : '[ ]'}</span>
         `;
@@ -2790,11 +3372,13 @@
             <button class="btn" id="btn-modal-close" style="flex:0 0 auto; min-width:40px; padding:6px 10px;">✕</button>
           </div>
           <div class="modal-body">
-            <textarea id="__dl-filter-input" placeholder="Digite nomes, IDs ou faixas de ID (ex.: 15, id:15, 10-30, de id 10 ate id 30)..."></textarea>
-            <div id="__dl-filter-help">Separadores aceitos: quebra de linha, virgula, ponto e virgula e barra vertical. Para ID use numero ou id:15. Para faixa use 10-30, 10 ate 30 ou de id 10 ate id 30.</div>
+            <textarea id="__dl-filter-input" placeholder="Digite nomes, IDs, faixas de ID ou tipos (ex.: pdf, csv, xml)..."></textarea>
+            <div id="__dl-filter-help">Separadores aceitos: quebra de linha, virgula, ponto e virgula e barra vertical. Para nome/ID: use [Manter/Remover Nomes]. Para tipo: use [Manter/Remover Tipos] com pdf,csv,doc,xml,txt etc.</div>
             <div id="__dl-modal-actions">
               <button class="btn btn-secondary" id="btn-modal-keep">[✓] Manter Nomes</button>
               <button class="btn btn-secondary" id="btn-modal-remove">[✂] Remover Nomes</button>
+              <button class="btn btn-secondary" id="btn-modal-keep-type">[✓] Manter Tipos</button>
+              <button class="btn btn-secondary" id="btn-modal-remove-type">[✂] Remover Tipos</button>
               <button class="btn btn-secondary" id="btn-modal-select-all">[+] Selecionar Todos</button>
               <button class="btn btn-secondary" id="btn-modal-deselect-all">[-] Desmarcar Todos</button>
               <button class="btn btn-secondary" id="btn-modal-clear-filter">[⌫] Limpar Campo</button>
@@ -2821,6 +3405,12 @@
       };
       modal.querySelector('#btn-modal-remove').onclick = () => {
         applyQueueNameFilter('remove', filterInput?.value || '');
+      };
+      modal.querySelector('#btn-modal-keep-type').onclick = () => {
+        applyQueueTypeFilter('keep', filterInput?.value || '');
+      };
+      modal.querySelector('#btn-modal-remove-type').onclick = () => {
+        applyQueueTypeFilter('remove', filterInput?.value || '');
       };
 
       modal.addEventListener('click', e => {
@@ -3081,7 +3671,7 @@
     console.clear();
     console.log('%c👾 BAIXATRON v3.1 ATIVADO 📡', 'color: #00ff00; font-size: 14px; font-weight: bold');
     console.log('%cO alien invasor de downloads está pronto!', 'color: #666; font-size: 12px');
-    console.log('%cComandos disponíveis: __dl.scan(), __dl.expandTable(), __dl.openBlockedFrames(), __dl.start(), __dl.stop(), __dl.reset()', 'color: #666; font-size: 11px');
+    console.log('%cComandos disponíveis: __dl.scan(), __dl.expandTable(), __dl.applyQueueNameFilter(), __dl.applyQueueTypeFilter(), __dl.openBlockedFrames(), __dl.start(), __dl.stop(), __dl.reset()', 'color: #666; font-size: 11px');
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', createPanel);
