@@ -315,6 +315,7 @@
                 arquivo: document.getElementById('obrigatorio_arquivo').checked,
                 letra: document.getElementById('obrigatorio_letra').checked
             };
+            const configuracaoSaida = obterConfiguracaoSaida(numeroDocumento);
             
             // Processar todos os arquivos em paralelo
             const decretos = await Promise.all(
@@ -352,7 +353,7 @@
             exibirResultados(documentosValidos, documentosFalhos);
             
             // Download automático dos arquivos
-            downloadArquivos(documentosValidos, documentosFalhos);
+            downloadArquivos(documentosValidos, documentosFalhos, configuracaoSaida);
             hideProgress();
             
             console.log('ID de Documentação:', numeroDocumento);
@@ -741,13 +742,51 @@
             
             return { documentosValidos, documentosFalhos };
         }
+
+        function obterConfiguracaoSaida(numeroDocumento) {
+            const tipoSelecionado = tiposDocumentosCache.find((item) => String(item.id) === String(numeroDocumento));
+            const publicarPortalInput = document.getElementById('portal');
+
+            return {
+                tipoDocumentoId: numeroDocumento || null,
+                publicarPortal: publicarPortalInput ? Boolean(publicarPortalInput.checked) : Boolean(tipoSelecionado?.publicar_portal),
+                gerarDoc: false,
+                gerarOcr: false
+            };
+        }
+
+        function mapearDocumentoParaPayload(doc, configuracaoSaida) {
+            const numero = doc?.numeroDoDocumento ?? null;
+            const tipoDocumentoId = configuracaoSaida?.tipoDocumentoId ?? doc?.numero ?? null;
+            const tipoDocumentoIdNumero = Number(tipoDocumentoId);
+
+            return {
+                publicar_portal: Boolean(configuracaoSaida?.publicarPortal),
+                data: doc?.data || null,
+                url: doc?.url || null,
+                numero: numero !== null && numero !== undefined && String(numero).trim() !== '' ? String(numero).trim() : null,
+                descricao: doc?.descricao || null,
+                conteudo: doc?.conteudo || null,
+                tipo_documento_id: Number.isNaN(tipoDocumentoIdNumero) ? (tipoDocumentoId || null) : tipoDocumentoIdNumero,
+                gerar_doc: Boolean(configuracaoSaida?.gerarDoc),
+                gerar_ocr: Boolean(configuracaoSaida?.gerarOcr),
+                letra: doc?.letra || null
+            };
+        }
         
-        function downloadArquivos(documentosValidos, documentosFalhos) {
+        function downloadArquivos(documentosValidos, documentosFalhos, configuracaoSaida) {
             let mensagem = '💾 Os arquivos JSON foram baixados automaticamente:\n\n';
+            const payloadValidos = documentosValidos.map((doc) => mapearDocumentoParaPayload(doc, configuracaoSaida));
+            const payloadFalhos = documentosFalhos.map((doc) => ({
+                ...mapearDocumentoParaPayload(doc, configuracaoSaida),
+                motivos_falha: doc.motivos_falha || [],
+                arquivo_original: doc.arquivo || null,
+                erro: doc.erro || null
+            }));
             
             // Download do arquivo com documentos válidos
-            if (documentosValidos.length > 0) {
-                const fileValidos = new Blob([JSON.stringify(documentosValidos, null, 2)], { type: 'application/json' });
+            if (payloadValidos.length > 0) {
+                const fileValidos = new Blob([JSON.stringify(payloadValidos, null, 2)], { type: 'application/json' });
                 const aValidos = document.createElement('a');
                 aValidos.href = URL.createObjectURL(fileValidos);
                 aValidos.download = 'informações_extraidos.json';
@@ -756,8 +795,8 @@
             }
             
             // Download do arquivo com documentos com falhas (se houver)
-            if (documentosFalhos.length > 0) {
-                const fileFalhos = new Blob([JSON.stringify(documentosFalhos, null, 2)], { type: 'application/json' });
+            if (payloadFalhos.length > 0) {
+                const fileFalhos = new Blob([JSON.stringify(payloadFalhos, null, 2)], { type: 'application/json' });
                 const aFalhos = document.createElement('a');
                 aFalhos.href = URL.createObjectURL(fileFalhos);
                 aFalhos.download = 'falha.json';
