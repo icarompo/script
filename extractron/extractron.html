@@ -755,6 +755,50 @@
             };
         }
 
+        function converterDataParaISO(valor) {
+            if (valor === null || valor === undefined) return null;
+
+            const texto = String(valor).trim();
+            if (!texto) return null;
+
+            const matchBr = texto.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})$/);
+            if (matchBr) {
+                const dia = Number(matchBr[1]);
+                const mes = Number(matchBr[2]);
+                const ano = Number(matchBr[3]);
+                const data = new Date(Date.UTC(ano, mes - 1, dia));
+
+                if (data.getUTCFullYear() === ano && (data.getUTCMonth() + 1) === mes && data.getUTCDate() === dia) {
+                    return `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+                }
+            }
+
+            const matchIsoDate = texto.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (matchIsoDate) return texto;
+
+            const matchYmd = texto.match(/^(\d{4})[\/\.](\d{1,2})[\/\.](\d{1,2})$/);
+            if (matchYmd) {
+                const ano = Number(matchYmd[1]);
+                const mes = Number(matchYmd[2]);
+                const dia = Number(matchYmd[3]);
+                const data = new Date(Date.UTC(ano, mes - 1, dia));
+
+                if (data.getUTCFullYear() === ano && (data.getUTCMonth() + 1) === mes && data.getUTCDate() === dia) {
+                    return `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+                }
+            }
+
+            const matchAno = texto.match(/^\d{4}$/);
+            if (matchAno) return `${texto}-01-01`;
+
+            const dataNativa = new Date(texto);
+            if (!Number.isNaN(dataNativa.getTime())) {
+                return dataNativa.toISOString().slice(0, 10);
+            }
+
+            return texto;
+        }
+
         function mapearDocumentoParaPayload(doc, configuracaoSaida) {
             const numero = doc?.numeroDoDocumento ?? null;
             const tipoDocumentoId = configuracaoSaida?.tipoDocumentoId ?? doc?.numero ?? null;
@@ -762,7 +806,7 @@
 
             return {
                 publicar_portal: Boolean(configuracaoSaida?.publicarPortal),
-                data: doc?.data || null,
+                data: converterDataParaISO(doc?.data),
                 url: doc?.url || null,
                 numero: numero !== null && numero !== undefined && String(numero).trim() !== '' ? String(numero).trim() : null,
                 descricao: doc?.descricao || null,
