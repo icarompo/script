@@ -225,21 +225,24 @@
 
             // Determinar o tipo do documento a partir da lista carregada
             let tipoDocumento = null;
-            try {
-                if (window.tiposDeDocumentos && Array.isArray(window.tiposDeDocumentos)) {
-                    const found = window.tiposDeDocumentos.find(t => String(t.id) === String(numeroDocumento));
-                    if (found) tipoDocumento = found.nome;
-                }
-                // fallback: usar texto do option (formato "id - nome")
-                if (!tipoDocumento) {
-                    const option = document.getElementById('select').selectedOptions?.[0];
-                    if (option && option.textContent) {
-                        const parts = option.textContent.split(' - ');
-                        tipoDocumento = parts.length > 1 ? parts.slice(1).join(' - ').trim() : option.textContent.trim();
+            const modoAutoDetectar = numeroDocumento === 'auto';
+            if (!modoAutoDetectar) {
+                try {
+                    if (window.tiposDeDocumentos && Array.isArray(window.tiposDeDocumentos)) {
+                        const found = window.tiposDeDocumentos.find(t => String(t.id) === String(numeroDocumento));
+                        if (found) tipoDocumento = found.nome;
                     }
+                    // fallback: usar texto do option (formato "id - nome")
+                    if (!tipoDocumento) {
+                        const option = document.getElementById('select').selectedOptions?.[0];
+                        if (option && option.textContent) {
+                            const parts = option.textContent.split(' - ');
+                            tipoDocumento = parts.length > 1 ? parts.slice(1).join(' - ').trim() : option.textContent.trim();
+                        }
+                    }
+                } catch (e) {
+                    console.error('Erro determinando tipoDocumento:', e);
                 }
-            } catch (e) {
-                console.error('Erro determinando tipoDocumento:', e);
             }
             
             // Validar se o ID foi preenchido
@@ -801,7 +804,19 @@
 
         function mapearDocumentoParaPayload(doc, configuracaoSaida) {
             const numero = doc?.numeroDoDocumento ?? null;
-            const tipoDocumentoId = configuracaoSaida?.tipoDocumentoId ?? doc?.numero ?? null;
+            let tipoDocumentoId = configuracaoSaida?.tipoDocumentoId ?? doc?.numero ?? null;
+
+            // Modo auto-detectar: resolver tipo_documento_id pelo nome do tipo detectado
+            if (tipoDocumentoId === 'auto' && doc?.tipoDocumento) {
+                const tipoNorm = normalizarBusca(doc.tipoDocumento);
+                const encontrado = tiposDocumentosCache.find(t =>
+                    normalizarBusca(t.nome) === tipoNorm ||
+                    normalizarBusca(t.nome).includes(tipoNorm) ||
+                    tipoNorm.includes(normalizarBusca(t.nome))
+                );
+                tipoDocumentoId = encontrado ? encontrado.id : null;
+            }
+
             const tipoDocumentoIdNumero = Number(tipoDocumentoId);
 
             return {
@@ -856,12 +871,29 @@
             alert(mensagem);
         }
 
+        // Tenta detectar o tipo do documento pelo nome do arquivo antes de ler o conteúdo.
+        // Usado no modo Auto-detectar para aplicar otimizações (ex: PPP lê só a 1ª página).
+        function detectarTipoPeloNome(nomeArquivo) {
+            const nome = String(nomeArquivo || '');
+            if (/di[aá]rio[\s_\-]?oficial/i.test(nome) || /\bdoem\b/i.test(nome)) return 'Diario Oficial';
+            if (/projeto[\s_\-]?pol[ií]tico[\s_\-]?pedag[óo]gico|\bppp\b/i.test(nome)) return 'Projeto Politico Pedagogico';
+            if (/^lei[\s_\-]/i.test(nome) || /[\s_\-]lei[\s_\-]/i.test(nome)) return 'Lei';
+            if (/^portaria[\s_\-]/i.test(nome) || /portaria/i.test(nome) || /^[Nn]\d+/i.test(nome)) return 'Portaria';
+            if (/^decreto[\s_\-]/i.test(nome) || /decreto/i.test(nome)) return 'Decreto';
+            if (/^ata[\s_\-]/i.test(nome) || /\bata\b/i.test(nome)) return 'Ata';
+            if (/projeto[\s_\-]?de[\s_\-]?lei/i.test(nome)) return 'Projeto de Lei';
+            return null;
+        }
+
         async function processarPDF(file, numeroDocumento, urlDocumentos, tipoDocumento) {
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             
             let textoCompleto = '';
-            const processarSomentePrimeiraPagina = isTipoProjetoPoliticoPedagogico(tipoDocumento);
+            // Em modo auto, tentar detectar o tipo pelo nome do arquivo para poder
+            // aplicar otimizações (ex: PPP só precisa da 1ª página).
+            const tipoEfetivo = tipoDocumento || detectarTipoPeloNome(file.name);
+            const processarSomentePrimeiraPagina = isTipoProjetoPoliticoPedagogico(tipoEfetivo);
 
             if (processarSomentePrimeiraPagina) {
                 const page = await pdf.getPage(1);
@@ -2132,7 +2164,10 @@
             const select = document.getElementById('select');
             const valorAtual = manterSelecionado ? String(select.value || '') : '';
 
-            select.innerHTML = '<option value="">Selecione um documento...</option>';
+            select.innerHTML = `
+                <option value="">Selecione um documento...</option>
+                <option value="auto">🔍 Auto-detectar (pelo nome/conteúdo)</option>
+            `;
 
             items.forEach((item) => {
                 const option = document.createElement('option');
@@ -2231,6 +2266,11 @@
             });
 
             select.addEventListener('change', () => {
+                if (select.value === 'auto') {
+                    buscaInput.value = '';
+                    selecionarTipo(null);
+                    return;
+                }
                 const selecionado = tiposDocumentosCache.find((item) => String(item.id) === String(select.value));
                 if (selecionado) {
                     buscaInput.value = labelTipoDocumento(selecionado);
