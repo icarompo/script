@@ -1803,9 +1803,23 @@
             return resultado;
         }
 
+        // Resolve o tipo efetivo: se tipoDocumento já foi definido, mantém; senão tenta resolver
+        // pelo cache de tipos, para garantir que o resultado sempre carrega o nome cadastrado.
+        function resolverTipoNome(tipoDetectado) {
+            if (!tipoDetectado) return tipoDetectado;
+            const norm = normalizarBusca(tipoDetectado);
+            const encontrado = tiposDocumentosCache.find(t => normalizarBusca(t.nome) === norm)
+                || tiposDocumentosCache.find(t => normalizarBusca(t.nome).includes(norm))
+                || tiposDocumentosCache.find(t => norm.includes(normalizarBusca(t.nome)));
+            return encontrado ? encontrado.nome : tipoDetectado;
+        }
+
         function extrairInformacoes(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
             console.log(`[DEBUG] Processando arquivo: ${nomeArquivo}`);
             console.log(`[DEBUG] Primeiros 200 chars do texto:`, texto.substring(0, 500));
+
+            // Helper: usa o tipo fornecido se não-nulo, senão resolve pelo nome detectado
+            const tipo = (nomeDetectado) => tipoDocumento || resolverTipoNome(nomeDetectado);
 
             if (isTipoDiario(tipoDocumento)) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DIARIO pelo tipo selecionado`);
@@ -1819,39 +1833,39 @@
 
             if (/di[aá]rio\s+oficial/i.test(`${nomeArquivo} ${texto.substring(0, 700)}`)) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DIARIO pelo conteúdo/nome`);
-                return extrairInformacoesDiario(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return extrairInformacoesDiario(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Diário Oficial'));
             }
 
             if (/projeto\s+pol[ií]tico\s+pedag[óo]gico|\bppp\b/i.test(texto.substring(0, 1200))) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PPP pelo conteúdo`);
-                return extrairInformacoesPPP(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                return extrairInformacoesPPP(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Projeto Político Pedagógico'));
             }
             
             // PRIORIDADE 1: Verificar pelo NOME DO ARQUIVO (mais confiável)
             if (/^Lei\s+n[°ºª\s]/i.test(nomeArquivo)) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI pelo nome do arquivo`);
-                const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Lei'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
             // PRIORIDADE 2: Verificar se é PORTARIA pelo nome
             if (/^N\d+/i.test(nomeArquivo) || /PORTARIA/i.test(nomeArquivo)) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo nome do arquivo`);
-                const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Portaria'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
             // PRIORIDADE 3: Verificar se é DECRETO pelo nome
             if (/^Decreto/i.test(nomeArquivo)) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO pelo nome do arquivo`);
-                const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Decreto'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
             // PRIORIDADE 4: Verificar se é ATA pelo nome
             if (/^Ata/i.test(nomeArquivo)) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA pelo nome do arquivo`);
-                const res = extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Ata'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
@@ -1861,7 +1875,7 @@
             const isAta = /ATA\s+DA?\s+[A-Z]\s+["ºª°\s]/i.test(texto.substring(0, 500));
             if (isAta) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como ATA pelo conteúdo`);
-                const res = extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Ata'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
@@ -1869,7 +1883,7 @@
             const isProjetoLei = /PROJETO\s+DE\s+LEI/i.test(texto.substring(0, 500));
             if (isProjetoLei) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROJETO DE LEI pelo conteúdo`);
-                const res = extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesProjetoLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Projeto de Lei'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
 
@@ -1877,7 +1891,7 @@
             const temPalavraPortaria = /PORTARIA/i.test(texto.substring(0, 500));
             if (temPalavraPortaria) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PORTARIA pelo conteúdo`);
-                const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesPortaria(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Portaria'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
 
@@ -1885,7 +1899,7 @@
             const isLei = /L\s*E\s*I|LEI/i.test(texto.substring(0, 500));
             if (isLei) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI pelo conteúdo`);
-                const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Lei'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
@@ -1893,7 +1907,7 @@
             const isDecreto = /DECRETO/i.test(texto.substring(0, 500));
             if (isDecreto) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO pelo conteúdo`);
-                const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Decreto'));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
 
