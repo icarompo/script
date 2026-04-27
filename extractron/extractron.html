@@ -550,6 +550,42 @@
             return null;
         }
 
+        function extrairDatasPadraoOrdenadas(texto) {
+            const fonte = String(texto || '');
+            const meses = {
+                'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'marÃ§o': '03', 'março': '03',
+                'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+                'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+            };
+            const datas = [];
+            const normalizarAno = (valorAno) => String(valorAno || '').replace(/\D/g, '').slice(0, 4);
+
+            const adicionar = (index, dia, mes, ano) => {
+                const d = Number(dia);
+                const m = Number(mes);
+                const a = Number(ano);
+                if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && a >= 1900 && a <= 2100) {
+                    datas.push({
+                        index,
+                        data: `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${String(a).padStart(4, '0')}`,
+                        ano: String(a).padStart(4, '0')
+                    });
+                }
+            };
+
+            for (const match of fonte.matchAll(/\b(\d{1,2})[\/\.-](\d{1,2})[\/\.-]((?:\d\s*){4})\b/g)) {
+                adicionar(match.index || 0, match[1], match[2], normalizarAno(match[3]));
+            }
+
+            for (const match of fonte.matchAll(/\b(\d{1,2})\s+(?:de\s+)?([A-Za-z\u00C0-\u00FF]+)\s+(?:de\s+)?((?:\d\s*){4})\b/gi)) {
+                const mesNome = normalizarSemAcentos(match[2]).toLowerCase().replace(/\s+/g, '');
+                const mes = meses[mesNome] || meses[match[2].toLowerCase()];
+                if (mes) adicionar(match.index || 0, match[1], mes, normalizarAno(match[3]));
+            }
+
+            return datas.sort((a, b) => a.index - b.index);
+        }
+
         function extrairNumeroRegimentoEmenda(texto, nomeArquivo) {
             const fonte = `${nomeArquivo || ''} ${texto || ''}`;
             const normalizarAno = (valorAno) => String(valorAno || '').replace(/\D/g, '').slice(0, 4);
@@ -1467,6 +1503,15 @@
             data = extrairDataLeiContextual(texto, nomeArquivo, numeroDoDocumento);
             if (data) {
                 console.log(`[LEI] Data extraida pelo numero da lei: ${data}`);
+            }
+
+            if (!data) {
+                const anoArquivo = extrairAnoDoNomeArquivo(nomeArquivo);
+                const datasMesmoAno = extrairDatasPadraoOrdenadas(texto).filter(item => item.ano === anoArquivo);
+                if (datasMesmoAno.length > 0) {
+                    data = datasMesmoAno[0].data;
+                    console.log(`[LEI] Data extraida pelo ano do arquivo: ${data}`);
+                }
             }
             
             // Formato 1: Do nome do arquivo (ex: "22 de Agosto de 2025")
