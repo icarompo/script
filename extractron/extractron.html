@@ -444,6 +444,18 @@
                 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
             };
 
+            const normalizarAno = (valorAno) => String(valorAno || '').replace(/\D/g, '').slice(0, 4);
+
+            // Ex.: "Plenária das Sessões ... Amazonas, 11 de fevereiro de 2025."
+            const matchExtensoComLocal = fonte.match(/(?:[A-Za-zÀ-ÿ\s\-]+,\s*)?(\d{1,2})\s+de\s+([A-Za-zçÇãÃõÕáÁéÉíÍóÓúÚâÂêÊôÔàÀ]+)\s+de\s+((?:\d\s*){4})/i);
+            if (matchExtensoComLocal) {
+                const dia = String(parseInt(matchExtensoComLocal[1], 10)).padStart(2, '0');
+                const mesNome = matchExtensoComLocal[2].toLowerCase();
+                const mes = meses[mesNome];
+                const ano = normalizarAno(matchExtensoComLocal[3]);
+                if (mes && ano.length === 4) return `${dia}/${mes}/${ano}`;
+            }
+
             const matchExtenso = fonte.match(/(\d{1,2})\s+de\s+([A-Za-zçÇãÃõÕáÁéÉíÍóÓúÚâÂêÊôÔàÀ]+)\s+de\s+(\d{4})/i);
             if (matchExtenso) {
                 const dia = String(parseInt(matchExtenso[1], 10)).padStart(2, '0');
@@ -461,7 +473,105 @@
                 return `${dia}/${mes}/${ano}`;
             }
 
+            const matchExtensoSemDe = fonte.match(/\b(\d{1,2})\s+([A-Za-zçÇãÃõÕáÁéÉíÍóÓúÚâÂêÊôÔàÀ]+)\s+((?:\d\s*){4})\b/i);
+            if (matchExtensoSemDe) {
+                const dia = String(parseInt(matchExtensoSemDe[1], 10)).padStart(2, '0');
+                const mesNome = matchExtensoSemDe[2].toLowerCase();
+                const mes = meses[mesNome];
+                const ano = normalizarAno(matchExtensoSemDe[3]);
+                if (mes && ano.length === 4) return `${dia}/${mes}/${ano}`;
+            }
+
             return null;
+        }
+
+        function isTipoRegimentoOuEmenda(tipoDocumento) {
+            const nome = normalizarSemAcentos(tipoDocumento).toLowerCase();
+            return /regimento|emenda/.test(nome);
+        }
+
+        function limparDescricaoArquivo(nomeArquivo) {
+            return String(nomeArquivo || '')
+                .replace(/\.pdf$/i, '')
+                .replace(/^\d{4}_[^_]+_/, '')
+                .replace(/[_\-]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function extrairNumeroRegimentoEmenda(texto, nomeArquivo) {
+            const fonte = `${nomeArquivo || ''} ${texto || ''}`;
+            const normalizarAno = (valorAno) => String(valorAno || '').replace(/\D/g, '').slice(0, 4);
+
+            const padroes = [
+                /EMENDA(?:\s+[A-ZÇÃÕÁÉÍÓÚÂÊÔÀ]+){0,3}\s+N[º°ª\s\.]*(\d{1,4})(?:\s*[-\/]\s*((?:\d\s*){4}))?/i,
+                /REGIMENTO(?:\s+INTERNO)?\s+N[º°ª\s\.]*(\d{1,4})(?:\s*[-\/]\s*((?:\d\s*){4}))?/i,
+                /(?:EMENDA|REGIMENTO)[^\n\r\d]{0,40}(\d{1,4})(?:\s*[-\/]\s*((?:\d\s*){4}))?/i
+            ];
+
+            for (const regex of padroes) {
+                const match = fonte.match(regex);
+                if (match) {
+                    const numero = match[1] ? String(parseInt(match[1], 10)) : null;
+                    const ano = normalizarAno(match[2]);
+                    if (numero && ano.length === 4) return `${numero}/${ano}`;
+                    if (numero) return numero;
+                }
+            }
+
+            const nomeLimpo = limparDescricaoArquivo(nomeArquivo);
+            const matchNome = nomeLimpo.match(/(?:EMENDA|REGIMENTO)[^\d]{0,30}(\d{1,4})(?:\s*[-\/]\s*((?:\d\s*){4}))?/i);
+            if (matchNome) {
+                const numero = matchNome[1] ? String(parseInt(matchNome[1], 10)) : null;
+                const ano = normalizarAno(matchNome[2]);
+                if (numero && ano.length === 4) return `${numero}/${ano}`;
+                if (numero) return numero;
+            }
+
+            return null;
+        }
+
+        function extrairDescricaoRegimentoEmenda(texto, nomeArquivo) {
+            const fonte = normalizarTextoCompleto(texto);
+            const candidatos = [
+                /(?:EMENTA|DISP[ÕO]E\s+SOBRE)\s*[:\-]?\s*([^\n\.]{20,320})/i,
+                /(EMENDA\s+[A-ZÇÃÕÁÉÍÓÚÂÊÔÀ\s\-]{6,220})/i,
+                /(REGIMENTO\s+INTERNO[ A-ZÇÃÕÁÉÍÓÚÂÊÔÀ\s\-]{0,220})/i
+            ];
+
+            for (const regex of candidatos) {
+                const match = fonte.match(regex);
+                if (match && match[1]) {
+                    return match[1].replace(/\s+/g, ' ').trim().toUpperCase();
+                }
+            }
+
+            const nomeLimpo = limparDescricaoArquivo(nomeArquivo);
+            return nomeLimpo ? nomeLimpo.toUpperCase() : null;
+        }
+
+        function extrairInformacoesRegimentoEmenda(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            const fonteTipo = `${nomeArquivo || ''} ${texto || ''}`;
+            let tipoFinal = tipoDocumento;
+
+            if (!tipoFinal) {
+                if (/emenda/i.test(fonteTipo)) {
+                    tipoFinal = resolverTipoNome('Emenda Parlamentar') || 'Emenda Parlamentar';
+                } else {
+                    tipoFinal = resolverTipoNome('Regimentos') || 'Regimentos';
+                }
+            }
+
+            return {
+                numero: numeroDocumento,
+                arquivo: nomeArquivo,
+                numeroDoDocumento: extrairNumeroRegimentoEmenda(texto, nomeArquivo),
+                data: extrairDataPadrao(texto, nomeArquivo),
+                letra: null,
+                descricao: extrairDescricaoRegimentoEmenda(texto, nomeArquivo),
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
+                tipoDocumento: tipoFinal
+            };
         }
 
         function extrairTipoEdicaoDiario(texto, nomeArquivo) {
@@ -877,6 +987,8 @@
             const nome = String(nomeArquivo || '');
             if (/di[aá]rio[\s_\-]?oficial/i.test(nome) || /\bdoem\b/i.test(nome)) return 'Diario Oficial';
             if (/projeto[\s_\-]?pol[ií]tico[\s_\-]?pedag[óo]gico|\bppp\b/i.test(nome)) return 'Projeto Politico Pedagogico';
+            if (/emenda/i.test(nome)) return 'Emenda Parlamentar';
+            if (/regimento/i.test(nome)) return 'Regimentos';
             if (/^lei[\s_\-]/i.test(nome) || /[\s_\-]lei[\s_\-]/i.test(nome)) return 'Lei';
             if (/^portaria[\s_\-]/i.test(nome) || /portaria/i.test(nome) || /^[Nn]\d+/i.test(nome)) return 'Portaria';
             if (/^decreto[\s_\-]/i.test(nome) || /decreto/i.test(nome)) return 'Decreto';
@@ -1865,6 +1977,12 @@
                     const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                     return pósProcessarNumero(res, texto, nomeArquivo);
                 }
+
+                if (isTipoRegimentoOuEmenda(tipoDocumento)) {
+                    console.log(`[DEBUG] ${nomeArquivo} -> Detectado como REGIMENTO/EMENDA pelo tipo selecionado`);
+                    const res = extrairInformacoesRegimentoEmenda(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                    return pósProcessarNumero(res, texto, nomeArquivo);
+                }
             }
 
             if (/di[aá]rio\s+oficial/i.test(`${nomeArquivo} ${texto.substring(0, 700)}`)) {
@@ -1904,6 +2022,12 @@
             if (tipoDetectadoPeloNome === 'Lei') {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como LEI pelo detector de nome`);
                 const res = extrairInformacoesLei(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Lei'));
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+
+            if (tipoDetectadoPeloNome === 'Regimentos' || tipoDetectadoPeloNome === 'Emenda Parlamentar') {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como REGIMENTO/EMENDA pelo detector de nome`);
+                const res = extrairInformacoesRegimentoEmenda(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoDetectadoPeloNome));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
             
@@ -1975,6 +2099,17 @@
             if (isDecreto) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DECRETO pelo conteúdo`);
                 const res = extrairInformacoesDecreto(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Decreto'));
+                return pósProcessarNumero(res, texto, nomeArquivo);
+            }
+
+            const isRegimentoOuEmenda = /\bREGIMENTO\b|\bEMENDA\b/i.test(texto.substring(0, 2000))
+                || /regimento|emenda/.test(nomeArquivoNormalizado);
+            if (isRegimentoOuEmenda) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como REGIMENTO/EMENDA pelo conteúdo`);
+                const tipoSugestao = /emenda/.test(`${nomeArquivoNormalizado} ${normalizarSemAcentos(texto.substring(0, 500)).toLowerCase()}`)
+                    ? 'Emenda Parlamentar'
+                    : 'Regimentos';
+                const res = extrairInformacoesRegimentoEmenda(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoSugestao));
                 return pósProcessarNumero(res, texto, nomeArquivo);
             }
 
