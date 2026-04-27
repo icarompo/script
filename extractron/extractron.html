@@ -513,7 +513,7 @@
             const nome = String(nomeArquivo || '');
             const candidatos = [
                 nome.match(/(?:^|[^A-Za-z0-9])(?:leis?|lei|atas?|decretos?|portarias?)(\d{4})(?=$|[^A-Za-z0-9])/i),
-                nome.match(/\b(?:20|19)\d{2}\b/)
+                nome.match(/(?:^|[^A-Za-z0-9])((?:20|19)\d{2})(?=$|[^A-Za-z0-9])/)
             ].filter(Boolean);
 
             if (!candidatos.length) return null;
@@ -584,6 +584,47 @@
             }
 
             return datas.sort((a, b) => a.index - b.index);
+        }
+
+        function obterDataCompetenciaArquivo(nomeArquivo) {
+            const nome = normalizarSemAcentos(nomeArquivo).toLowerCase();
+            const meses = {
+                janeiro: '01', fevereiro: '02', marco: '03', abril: '04',
+                maio: '05', junho: '06', julho: '07', agosto: '08',
+                setembro: '09', outubro: '10', novembro: '11', dezembro: '12'
+            };
+
+            const match = nome.match(/\b((?:19|20)\d{2})[_\-\s]+(\d{1,2})?\s*([a-z]+)?/i);
+            if (!match) return null;
+
+            const ano = match[1];
+            let mes = match[2] ? String(parseInt(match[2], 10)).padStart(2, '0') : null;
+            const mesNome = String(match[3] || '').replace(/[^a-z]/g, '');
+
+            if (!mes && mesNome) {
+                mes = meses[mesNome] || null;
+            }
+
+            if (!mes || Number(mes) < 1 || Number(mes) > 12) return null;
+            return `01/${mes}/${ano}`;
+        }
+
+        function tipoDocumentoSemNumero(tipoDocumento) {
+            const nome = normalizarBusca(tipoDocumento);
+            return /\b(despesas|diarias|estornos|empenhos|liquidacoes|balancetes)\b/.test(nome);
+        }
+
+        function detectarTipoDespesaPeloNome(nomeArquivo) {
+            const nome = normalizarBusca(nomeArquivo);
+
+            if (/\bdiarias?\b|diarias?/.test(nome)) return 'Diarias';
+            if (/\bestornos?\b|estorno/.test(nome)) return 'Estornos';
+            if (nome.includes('balancete') || /\bisolado\b|balanco/.test(nome)) return 'Balancetes';
+            if (nome.includes('lstemp') || /listagem\s+(?:de\s+)?emp|listagem\s+de\s+empenhos|empenhos?/.test(nome)) return 'Empenhos';
+            if (nome.includes('razliq') || /razao\s+de\s+liquidacao|liquidacoes?/.test(nome)) return 'Liquidacoes';
+            if (nome.includes('lstord') || nome.includes('dsptot') || /despesa|listagem\s+de\s+op|ordem|demonstrativo\s+da\s+despesa/.test(nome)) return 'Despesas';
+
+            return null;
         }
 
         function extrairNumeroRegimentoEmenda(texto, nomeArquivo) {
@@ -879,6 +920,7 @@
                 let temErro = false;
                 const erros = [];
                 const isPPP = isTipoProjetoPoliticoPedagogico(doc.tipoDocumento);
+                const semNumero = tipoDocumentoSemNumero(doc.tipoDocumento);
                 
                 // Verificar se tem erro no processamento
                 if (doc.erro) {
@@ -887,7 +929,7 @@
                 }
                 
                 // Validar campos obrigatórios
-                if (!isPPP && camposObrigatorios.numero && (!doc.numeroDoDocumento || doc.numeroDoDocumento === 'Erro no processamento')) {
+                if (!isPPP && !semNumero && camposObrigatorios.numero && (!doc.numeroDoDocumento || doc.numeroDoDocumento === 'Erro no processamento')) {
                     temErro = true;
                     erros.push('Número do documento ausente ou inválido');
                 }
@@ -1073,6 +1115,8 @@
         function detectarTipoPeloNome(nomeArquivo) {
             const nome = String(nomeArquivo || '');
             const nomeNormalizado = normalizarBusca(nomeArquivo);
+            const tipoDespesa = detectarTipoDespesaPeloNome(nomeArquivo);
+            if (tipoDespesa) return tipoDespesa;
             if (/di[aá]rio[\s_\-]?oficial/i.test(nome) || /\bdoem\b/i.test(nome)) return 'Diario Oficial';
             if (/projeto[\s_\-]?pol[ií]tico[\s_\-]?pedag[óo]gico|\bppp\b/i.test(nome)) return 'Projeto Politico Pedagogico';
             if (/emenda/i.test(nome)) return 'Emenda Parlamentar';
@@ -1158,6 +1202,39 @@
                 console.error('Erro no OCR:', error);
                 return '';
             }
+        }
+
+        function extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
+            const tipoDetectado = tipoDocumento || detectarTipoDespesaPeloNome(nomeArquivo) || 'Despesas';
+            const nomeLimpo = limparDescricaoArquivo(nomeArquivo)
+                .replace(/^\d{4}\s+\d{1,2}\s*[A-Za-z\u00C0-\u00FF]+\s*/i, '')
+                .replace(/\b(LSTORD|LSTEMP|RAZLIQ)\b/ig, (match) => {
+                    const mapa = {
+                        LSTORD: 'Listagem de Ordens',
+                        LSTEMP: 'Listagem de Empenhos',
+                        RAZLIQ: 'Razao de Liquidacao'
+                    };
+                    return mapa[match.toUpperCase()] || match;
+                })
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            const numeroMatch = String(nomeArquivo || '').match(/(?:^|[_\-\s])(\d{1,3})(?:[\.\s_\-]|$)/);
+            const competencia = obterDataCompetenciaArquivo(nomeArquivo);
+            const anoArquivo = extrairAnoDoNomeArquivo(nomeArquivo);
+            const data = extrairDataPadrao(texto, nomeArquivo) || competencia || (anoArquivo ? `01/01/${anoArquivo}` : null);
+            const descricao = nomeLimpo || tipoDetectado;
+
+            return {
+                numero: numeroDocumento,
+                arquivo: nomeArquivo,
+                numeroDoDocumento: numeroMatch ? String(parseInt(numeroMatch[1], 10)) : null,
+                data: data,
+                letra: null,
+                descricao: descricao.toUpperCase(),
+                url: `${urlDocumentos}${encodeURIComponent(nomeArquivo)}`,
+                tipoDocumento: tipoDetectado
+            };
         }
 
         function extrairInformacoesAta(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
@@ -2098,6 +2175,11 @@
 
             // Quando o tipo foi selecionado manualmente, prioriza esse roteamento.
             if (tipoSelecionadoNormalizado) {
+                if (tipoDocumentoSemNumero(tipoDocumento)) {
+                    console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DESPESA/CONTABIL pelo tipo selecionado`);
+                    return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                }
+
                 if (isTipoDiario(tipoDocumento)) {
                     console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DIARIO pelo tipo selecionado`);
                     return extrairInformacoesDiario(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
@@ -2153,6 +2235,11 @@
             if (/projeto\s+pol[ií]tico\s+pedag[óo]gico|\bppp\b/i.test(texto.substring(0, 1200))) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PPP pelo conteúdo`);
                 return extrairInformacoesPPP(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Projeto Político Pedagógico'));
+            }
+
+            if (tipoDetectadoPeloNome && tipoDocumentoSemNumero(tipoDetectadoPeloNome)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DESPESA/CONTABIL pelo detector de nome`);
+                return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoDetectadoPeloNome));
             }
 
             if (tipoDetectadoPeloNome === 'Ata') {
