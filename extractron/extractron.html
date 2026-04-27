@@ -523,6 +523,33 @@
             return ano.length === 4 ? ano : null;
         }
 
+        function escaparRegex(valor) {
+            return String(valor || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function extrairDataLeiContextual(texto, nomeArquivo, numeroLei) {
+            const numero = String(numeroLei || '').replace(/\D/g, '');
+            if (!numero) return null;
+
+            const fonte = normalizarTextoCompleto(`${nomeArquivo || ''} ${texto || ''}`);
+            const numeroRegex = escaparRegex(numero).split('').join('\\s*');
+            const padroes = [
+                new RegExp(`LEI\\s+N[º°ª\\s\\.]*${numeroRegex}\\s*[,\\-]?\\s*(?:DE\\s+)?[^\\n\\.]{0,140}`, 'i'),
+                new RegExp(`L\\s*E\\s*I\\s+N[º°ª\\s\\.]*${numeroRegex}\\s*[,\\-]?\\s*(?:DE\\s+)?[^\\n\\.]{0,140}`, 'i'),
+                new RegExp(`N[º°ª\\s\\.]*${numeroRegex}\\s*[,\\-]?\\s*(?:DE\\s+)?[^\\n\\.]{0,140}`, 'i')
+            ];
+
+            for (const regex of padroes) {
+                const match = fonte.match(regex);
+                if (!match) continue;
+
+                const data = extrairDataPadrao(match[0], '');
+                if (data) return data;
+            }
+
+            return null;
+        }
+
         function extrairNumeroRegimentoEmenda(texto, nomeArquivo) {
             const fonte = `${nomeArquivo || ''} ${texto || ''}`;
             const normalizarAno = (valorAno) => String(valorAno || '').replace(/\D/g, '').slice(0, 4);
@@ -1436,11 +1463,16 @@
             
             // Extrair data - MÚLTIPLOS FORMATOS
             let data = null;
+
+            data = extrairDataLeiContextual(texto, nomeArquivo, numeroDoDocumento);
+            if (data) {
+                console.log(`[LEI] Data extraida pelo numero da lei: ${data}`);
+            }
             
             // Formato 1: Do nome do arquivo (ex: "22 de Agosto de 2025")
             const regexDataNomeArquivo = /(\d{1,2})\s+de\s+([A-Za-zç]+)\s+de\s+(\d{4})/i;
             const matchDataNome = nomeArquivo.match(regexDataNomeArquivo);
-            if (matchDataNome) {
+            if (!data && matchDataNome) {
                 const dia = parseInt(matchDataNome[1]);
                 const mesNome = matchDataNome[2].toLowerCase();
                 const mes = meses[mesNome] || '01';
