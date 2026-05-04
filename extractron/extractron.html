@@ -1134,6 +1134,31 @@
             const numero = doc?.numeroDoDocumento ?? null;
             let tipoDocumentoId = configuracaoSaida?.tipoDocumentoId ?? doc?.numero ?? null;
             const documentoFinanceiro = normalizarBusca(`${doc?.arquivo || ''} ${doc?.url || ''} ${doc?.descricao || ''}`);
+            const tituloDocumento = `${doc?.tipoDocumento || ''} ${doc?.arquivo || doc?.arquivo_original || ''} ${doc?.descricao || ''} ${doc?.url || ''}`;
+
+            const resolverTipoDocumentoId = (termo) => {
+                const tipoNorm = normalizarBusca(termo || '');
+                const tipoCompacto = tipoNorm.replace(/[^a-z0-9]+/g, '');
+                if (!tipoNorm) return null;
+
+                const encontrado = tiposDocumentosCache.find((t) => {
+                    const nome = normalizarBusca(t.nome || '');
+                    const nomeArquivo = normalizarBusca(t.nome_arquivo || '');
+                    const nomeCompacto = nome.replace(/[^a-z0-9]+/g, '');
+                    const nomeArquivoCompacto = nomeArquivo.replace(/[^a-z0-9]+/g, '');
+
+                    return (
+                        nome === tipoNorm ||
+                        nome.includes(tipoNorm) ||
+                        tipoNorm.includes(nome) ||
+                        (nomeArquivo && (nomeArquivo === tipoNorm || nomeArquivo.includes(tipoNorm) || tipoNorm.includes(nomeArquivo))) ||
+                        (nomeCompacto && (nomeCompacto === tipoCompacto || tipoCompacto.includes(nomeCompacto) || nomeCompacto.includes(tipoCompacto))) ||
+                        (nomeArquivoCompacto && (nomeArquivoCompacto === tipoCompacto || tipoCompacto.includes(nomeArquivoCompacto) || nomeArquivoCompacto.includes(tipoCompacto)))
+                    );
+                });
+
+                return encontrado ? encontrado.id : null;
+            };
 
             if (tipoDocumentoId === 'auto' && /informacao\s*financeiras?|balanco\s*anual|balancoanual|balancetes?\s*mensais|balancetesmensais/.test(documentoFinanceiro)) {
                 const tipoBalancetes = tiposDocumentosCache.find(t => normalizarBusca(t.nome) === 'balancetes');
@@ -1144,20 +1169,27 @@
 
             // Modo auto-detectar: resolver tipo_documento_id pelo nome do tipo detectado
             if (tipoDocumentoId === 'auto' && doc?.tipoDocumento) {
-                const tipoNorm = normalizarBusca(doc.tipoDocumento);
-                const encontrado = tiposDocumentosCache.find(t =>
-                    normalizarBusca(t.nome) === tipoNorm ||
-                    normalizarBusca(t.nome).includes(tipoNorm) ||
-                    tipoNorm.includes(normalizarBusca(t.nome))
-                );
-                tipoDocumentoId = encontrado ? encontrado.id : null;
+                tipoDocumentoId = resolverTipoDocumentoId(doc.tipoDocumento);
+            }
+
+            // Fallback pelo titulo do documento (arquivo/descricao/url) quando o tipo nao veio do parser
+            if (tipoDocumentoId === 'auto') {
+                const tipoPeloTitulo = detectarTipoPeloNome(tituloDocumento)
+                    || detectarTipoDespesaPeloNome(tituloDocumento)
+                    || detectarTipoProcedimentoPeloNome(tituloDocumento);
+
+                if (tipoPeloTitulo) {
+                    tipoDocumentoId = resolverTipoDocumentoId(tipoPeloTitulo) ?? null;
+                }
             }
 
             const tipoDocumentoIdNumero = Number(tipoDocumentoId);
+            const dataInferidaPorTitulo = obterDataCompetenciaArquivo(doc?.arquivo || doc?.arquivo_original || doc?.descricao || '');
+            const dataFinal = converterDataParaISO(doc?.data || dataInferidaPorTitulo);
 
             return {
                 publicar_portal: Boolean(configuracaoSaida?.publicarPortal),
-                data: converterDataParaISO(doc?.data),
+                data: dataFinal,
                 url: doc?.url || null,
                 numero: numero !== null && numero !== undefined && String(numero).trim() !== '' ? String(numero).trim() : null,
                 descricao: doc?.descricao || null,
@@ -1216,6 +1248,8 @@
             if (tipoProcedimento) return tipoProcedimento;
             const tipoDespesa = detectarTipoDespesaPeloNome(nomeArquivo);
             if (tipoDespesa) return tipoDespesa;
+            if (/folha[\s_\-]*de[\s_\-]*pagamento|folhadepagamento|\bfopag\b/i.test(nome) || /folha\s*de\s*pagamento|folhadepagamento|\bfopag\b/.test(nomeNormalizado)) return 'Folha de Pagamento';
+            if (/quadro[\s_\-]*atual[\s_\-]*de[\s_\-]*servidores|quadroatualdeservidores/i.test(nome) || /quadro\s*atual\s*de\s*servidores|quadroatualdeservidores/.test(nomeNormalizado)) return 'Quadro Atual de Servidores';
             if (/di[aá]rio[\s_\-]?oficial/i.test(nome) || /\bdoem\b/i.test(nome)) return 'Diario Oficial';
             if (/projeto[\s_\-]?pol[ií]tico[\s_\-]?pedag[óo]gico|\bppp\b/i.test(nome)) return 'Projeto Politico Pedagogico';
             if (/relat[oó]rio[\s_\-]?de[\s_\-]?gest[aã]o[\s_\-]?fiscal|\brgf\b/i.test(nome) || /relatorio\s*de\s*gestao\s*fiscal|relatoriodegestaofiscal|\brgf\b/.test(nomeNormalizado)) return 'Relatório de Gestão Fiscal - RGF';
@@ -2497,7 +2531,73 @@
 
             console.error(`[ERRO] ${nomeArquivo} -> Nenhum padrão detectado!`);
             console.error(`[ERRO] Primeiros 500 caracteres:`, texto.substring(0, 500));
-            return { 
+
+            // Tentativa de inferir dados a partir do nome do arquivo (fallback)
+            try {
+                const arquivo = String(nomeArquivo || '');
+                const arquivoNorm = arquivo.replace(/[_\-]+/g, ' ');
+                const anoMatch = arquivo.match(/(19|20)\d{2}/);
+                const meses = {
+                    janeiro: '01', fevereiro: '02', marco: '03', marcoo: '03', 'março': '03', abril: '04', maio: '05', junho: '06',
+                    julho: '07', agosto: '08', setembro: '09', outubro: '10', novembro: '11', dezembro: '12'
+                };
+                const mesRegex = new RegExp(Object.keys(meses).join('|'), 'i');
+                const mesMatch = arquivoNorm.match(mesRegex);
+
+                if (mesMatch && anoMatch) {
+                    const mesKey = mesMatch[0].toLowerCase();
+                    const mesNum = meses[mesKey] || meses[mesKey.normalize('NFD').replace(/[^a-z]/g, '')];
+                    const ano = Number(anoMatch[0]);
+                    const m = Number(mesNum || '01');
+                    // Último dia do mês: criar Date com dia 0 do próximo mês
+                    const ultimoDia = new Date(ano, m, 0).getDate();
+                    const iso = `${ano}-${String(m).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`;
+
+                    // Tentar inferir tipo de documento pelo nome do arquivo
+                    let tiposLista = [];
+                    if (typeof tiposDocumentosCache !== 'undefined' && Array.isArray(tiposDocumentosCache) && tiposDocumentosCache.length) {
+                        tiposLista = tiposDocumentosCache;
+                    } else if (window.tiposDeDocumentos && Array.isArray(window.tiposDeDocumentos)) {
+                        tiposLista = window.tiposDeDocumentos;
+                    }
+
+                    const normalizar = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                    const normalizarCompacto = (v) => normalizar(v).replace(/[^a-z0-9]+/g, '');
+                    const nomeBusca = normalizar(arquivo.replace(/\.[^.]+$/, '').replace(/[_\-]+/g, ' '));
+                    const nomeBuscaCompacto = normalizarCompacto(arquivo.replace(/\.[^.]+$/, ''));
+
+                    let tipoDetectado = null;
+                    for (const t of tiposLista) {
+                        const nomeNorm = normalizar(t.nome || t.nome_arquivo || '');
+                        const nomeNormCompacto = normalizarCompacto(t.nome || t.nome_arquivo || '');
+                        const nomeArquivoNormCompacto = normalizarCompacto(t.nome_arquivo || '');
+                        if (!nomeNorm) continue;
+                        if (
+                            nomeBusca.includes(nomeNorm) ||
+                            nomeNorm.includes(nomeBusca) ||
+                            (t.nome_arquivo && nomeBusca.includes(normalizar(t.nome_arquivo))) ||
+                            (nomeNormCompacto && (nomeBuscaCompacto.includes(nomeNormCompacto) || nomeNormCompacto.includes(nomeBuscaCompacto))) ||
+                            (nomeArquivoNormCompacto && nomeBuscaCompacto.includes(nomeArquivoNormCompacto))
+                        ) {
+                            tipoDetectado = t.nome || null;
+                            break;
+                        }
+                    }
+
+                    return {
+                        erro: null,
+                        arquivo: nomeArquivo,
+                        numeroDoDocumento: null,
+                        data: iso,
+                        descricao: arquivo,
+                        tipoDocumento: tipoDetectado
+                    };
+                }
+            } catch (e) {
+                console.warn('[WARN] fallback inferencia a partir do nome do arquivo falhou', e);
+            }
+
+            return {
                 erro: "Documento não possui regex",
                 arquivo: nomeArquivo,
                 numeroDoDocumento: null,
