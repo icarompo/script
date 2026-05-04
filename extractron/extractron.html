@@ -588,41 +588,130 @@
 
         function obterDataCompetenciaArquivo(nomeArquivo) {
             const nome = normalizarSemAcentos(nomeArquivo).toLowerCase();
+            const nomePalavras = nome.replace(/[^a-z0-9]+/g, ' ');
             const meses = {
                 janeiro: '01', fevereiro: '02', marco: '03', abril: '04',
                 maio: '05', junho: '06', julho: '07', agosto: '08',
-                setembro: '09', outubro: '10', novembro: '11', dezembro: '12'
+                setembro: '09', outubro: '10', novembro: '11', dezembro: '12',
+                jan: '01', fev: '02', mar: '03', abr: '04', mai: '05',
+                jun: '06', jul: '07', ago: '08', set: '09', out: '10',
+                nov: '11', dez: '12'
+            };
+            const ultimoDiaMes = (ano, mes) => {
+                const ultimoDia = new Date(Number(ano), Number(mes), 0).getDate();
+                return `${String(ultimoDia).padStart(2, '0')}/${mes}/${ano}`;
             };
 
-            const match = nome.match(/\b((?:19|20)\d{2})[_\-\s]+(\d{1,2})?\s*([a-z]+)?/i);
-            if (!match) return null;
-
-            const ano = match[1];
-            let mes = match[2] ? String(parseInt(match[2], 10)).padStart(2, '0') : null;
-            const mesNome = String(match[3] || '').replace(/[^a-z]/g, '');
-
-            if (!mes && mesNome) {
-                mes = meses[mesNome] || null;
+            const semestre = nome.match(/((?:19|20)\d{2})[_\-\s]+0?([12])\s*semestre\b/i)
+                || nome.match(/((?:19|20)\d{2}).{0,12}\b([12])(?:o|º)?\s*semestre\b/i);
+            if (semestre) {
+                const ano = semestre[1];
+                const numeroSemestre = semestre[2];
+                return numeroSemestre === '1' ? `30/06/${ano}` : `31/12/${ano}`;
             }
 
-            if (!mes || Number(mes) < 1 || Number(mes) > 12) return null;
-            return `01/${mes}/${ano}`;
+            const matchAnoMesColado = nome.match(/((?:19|20)\d{2})[_\-\s]*(\d{1,2})\s*([a-z]+)?/i);
+            if (matchAnoMesColado) {
+                const ano = matchAnoMesColado[1];
+                let mes = matchAnoMesColado[2] ? String(parseInt(matchAnoMesColado[2], 10)).padStart(2, '0') : null;
+                const mesNome = String(matchAnoMesColado[3] || '').replace(/[^a-z]/g, '');
+
+                if (mesNome && meses[mesNome]) {
+                    mes = meses[mesNome];
+                }
+
+                if (mes && Number(mes) >= 1 && Number(mes) <= 12) {
+                    return ultimoDiaMes(ano, mes);
+                }
+            }
+
+            const match = nome.match(/\b((?:19|20)\d{2})[_\-\s]+(\d{1,2})?\s*([a-z]+)?/i);
+            if (match) {
+                const ano = match[1];
+                let mes = match[2] ? String(parseInt(match[2], 10)).padStart(2, '0') : null;
+                const mesNome = String(match[3] || '').replace(/[^a-z]/g, '');
+
+                if (!mes && mesNome) {
+                    mes = meses[mesNome] || null;
+                }
+
+                if (mes && Number(mes) >= 1 && Number(mes) <= 12) {
+                    return ultimoDiaMes(ano, mes);
+                }
+            }
+
+            const anoSolto = nomePalavras.match(/\b((?:19|20)\d{2})\b/);
+            const mesSolto = nomePalavras.match(/\b(janeiro|jan|fevereiro|fev|marco|mar|abril|abr|maio|mai|junho|jun|julho|jul|agosto|ago|setembro|set|outubro|out|novembro|nov|dezembro|dez)\b/);
+
+            if (anoSolto && mesSolto) {
+                const ano = anoSolto[1];
+                const mes = meses[mesSolto[1]];
+                if (mes) return ultimoDiaMes(ano, mes);
+            }
+
+            return null;
         }
 
         function tipoDocumentoSemNumero(tipoDocumento) {
             const nome = normalizarBusca(tipoDocumento);
-            return /\b(despesas|diarias|estornos|empenhos|liquidacoes|balancetes)\b/.test(nome);
+            return /\b(despesas|receitas|diarias|estornos|empenhos|liquidacoes|balancetes|relatorio|rgf|ldo|ppa|plano\s+plurianual|procedimentos?\s+licitatorios?|homologacao|ata\s+de\s+registro\s+de\s+precos?)\b/.test(nome);
         }
 
         function detectarTipoDespesaPeloNome(nomeArquivo) {
-            const nome = normalizarBusca(nomeArquivo);
+            const nome = normalizarBusca(nomeArquivo).replace(/[^a-z0-9]+/g, ' ');
 
+            if (/informacao\s+financeiras?|balanco\s*anual|balancoanual|balancetes?\s*mensais|balancetesmensais|relatorio\s*de\s*gestao\s*fiscal|relatoriodegestaofiscal|\brgf\b|lei\s*de\s*diretrizes\s*orcamentarias|leidediretrizesorcamentarias|\bldo\b|plano\s*plurianual|planoplurianual|\bppa\b/.test(nome)) return 'Balancetes';
+            if (/\bpor\s+credores?\b|\bcredores?\b|pagamentos?\s+efetuados?|\bordens?\s+de\s+pagamento\b|listagem\s+(?:das?\s+)?ordens?\s+de\s+pagamento/.test(nome)) return 'Despesas';
+            if (/\bpag(?:amento)?\b|\bpags?\b|\bsal[aá]rios?\b|\bfolha\s+de\s+pagamento\b|\bpens[aã]o\b|\bconsignad[oa]\b|\bdarf\b|\binss\b|\birrf\b|\benergia\b|\btaxas?\b|\bremessa\b/.test(nome)) return 'Despesas';
+            if (/\breceitas?\b|listagem\s+(?:das?\s+)?receitas?/.test(nome)) return 'Receitas';
+            if (/\bextratos?\b|\bextratos?\s+bancarios?\b|\brepasses?\b|repasse\s+mensal|\blancamento\s+(?:dif\s+)?repasse\b/.test(nome)) return 'Receitas';
             if (/\bdiarias?\b|diarias?/.test(nome)) return 'Diarias';
             if (/\bestornos?\b|estorno/.test(nome)) return 'Estornos';
             if (nome.includes('balancete') || /\bisolado\b|balanco/.test(nome)) return 'Balancetes';
             if (nome.includes('lstemp') || /listagem\s+(?:de\s+)?emp|listagem\s+de\s+empenhos|empenhos?/.test(nome)) return 'Empenhos';
             if (nome.includes('razliq') || /razao\s+de\s+liquidacao|liquidacoes?/.test(nome)) return 'Liquidacoes';
-            if (nome.includes('lstord') || nome.includes('dsptot') || /despesa|listagem\s+de\s+op|ordem|demonstrativo\s+da\s+despesa/.test(nome)) return 'Despesas';
+            if (nome.includes('lstord') || nome.includes('dsptot') || /despesa|listagem\s+de\s+op|ordens?|demonstrativo\s+da\s+despesa/.test(nome)) return 'Despesas';
+
+            return null;
+        }
+
+        function detectarTipoProcedimentoPeloNome(nomeArquivo) {
+            const nome = normalizarBusca(nomeArquivo).replace(/[^a-z0-9]+/g, ' ');
+
+            if (/\baditivo\b.*\bcontrato\b|\btermo\s+aditivo\b/.test(nome)) return 'Aditivo de Contrato';
+            if (/\bextrato\s+de\s+contrato\b/.test(nome)) return 'Extrato de Contrato';
+            if (/\bata\b.*\b(?:registro|resgistro)\b.*\bp?precos?\b/.test(nome)) return 'Ata de Registro de Preços';
+            if (/\bhomologacao\b/.test(nome)) return 'Homologação';
+            if (/\bcontratos?\b|\bcontarto\b|\btermo\s+de\s+contrato\b|\bcontrato\s+(?:de\s+)?dispensa\b|\bcontrato\s+pregao\b|(?:^|\s)ct\s*\d+/.test(nome)) return 'Contrato';
+            if (/\blicita(?:cao|coes)\b|\bpregao\b|\bdispensa\b|\bprocedimentos?\s+licitatorios?\b/.test(nome)) return 'Procedimentos Licitatorios';
+
+            return null;
+        }
+
+        function detectarTipoProcedimentoPeloConteudo(texto) {
+            const inicio = normalizarBusca(texto).replace(/[^a-z0-9]+/g, ' ').substring(0, 2500);
+
+            if (/\bextrato\s+de\s+contrato\b/.test(inicio)) return 'Extrato de Contrato';
+            if (/\bata\b.*\b(?:registro|resgistro)\b.*\bp?precos?\b/.test(inicio)) return 'Ata de Registro de Preços';
+            if (/\bhomologacao\s+(?:do|da)?\s*(?:pregao|dispensa)?\b/.test(inicio)) return 'Homologação';
+            if (/\btermo\s+de\s+contrato\b|\bnumero\s+de\s+contrato\b|\bcontratada\b|\bcontratante\b/.test(inicio)) return 'Contrato';
+            if (/\bpregao\s+presencial\b|\bprocesso\s+licitatorio\b|\blicita(?:cao|coes)\b/.test(inicio)) return 'Procedimentos Licitatorios';
+
+            return null;
+        }
+
+        function detectarTipoDespesaPeloConteudo(texto) {
+            const inicio = normalizarBusca(texto).replace(/[^a-z0-9]+/g, ' ').substring(0, 2500);
+
+            if (/balancete\s+da\s+despesa|demonstrativo\s+da\s+despesa|pagamentos?\s+efetuados?|listagem\s+(?:das?\s+)?ordens?\s+de\s+pagamento|ordens?\s+de\s+pagamento|comprovante\s+de\s+pagamento|pag\s+salario|data\s+do\s+pagamento|despesa\s+de\s+(?:janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)/.test(inicio)) return 'Despesas';
+            if (/\breceitas?\b|listagem\s+(?:das?\s+)?receitas?/.test(inicio)) return 'Receitas';
+            if (/\bextratos?\b|\bextratos?\s+bancarios?\b|\brepasses?\b|repasse\s+mensal|\blancamento\s+(?:dif\s+)?repasse\b/.test(inicio)) return 'Receitas';
+            if (/\bdiarias?\b/.test(inicio)) return 'Diarias';
+            if (/\bestornos?\b/.test(inicio)) return 'Estornos';
+            if (/\bempenhos?\b|listagem\s+de\s+empenhos?/.test(inicio)) return 'Empenhos';
+            if (/razao\s+de\s+liquidacao|\bliquidacoes?\b/.test(inicio)) return 'Liquidacoes';
+            if (/\bdespesas?\b/.test(inicio)) return 'Despesas';
+            if (/\bbalancetes?\b|\bbalanco\b/.test(inicio)) return 'Balancetes';
 
             return null;
         }
@@ -1044,6 +1133,14 @@
         function mapearDocumentoParaPayload(doc, configuracaoSaida) {
             const numero = doc?.numeroDoDocumento ?? null;
             let tipoDocumentoId = configuracaoSaida?.tipoDocumentoId ?? doc?.numero ?? null;
+            const documentoFinanceiro = normalizarBusca(`${doc?.arquivo || ''} ${doc?.url || ''} ${doc?.descricao || ''}`);
+
+            if (tipoDocumentoId === 'auto' && /informacao\s*financeiras?|balanco\s*anual|balancoanual|balancetes?\s*mensais|balancetesmensais/.test(documentoFinanceiro)) {
+                const tipoBalancetes = tiposDocumentosCache.find(t => normalizarBusca(t.nome) === 'balancetes');
+                if (tipoBalancetes) {
+                    tipoDocumentoId = tipoBalancetes.id;
+                }
+            }
 
             // Modo auto-detectar: resolver tipo_documento_id pelo nome do tipo detectado
             if (tipoDocumentoId === 'auto' && doc?.tipoDocumento) {
@@ -1115,10 +1212,15 @@
         function detectarTipoPeloNome(nomeArquivo) {
             const nome = String(nomeArquivo || '');
             const nomeNormalizado = normalizarBusca(nomeArquivo);
+            const tipoProcedimento = detectarTipoProcedimentoPeloNome(nomeArquivo);
+            if (tipoProcedimento) return tipoProcedimento;
             const tipoDespesa = detectarTipoDespesaPeloNome(nomeArquivo);
             if (tipoDespesa) return tipoDespesa;
             if (/di[aá]rio[\s_\-]?oficial/i.test(nome) || /\bdoem\b/i.test(nome)) return 'Diario Oficial';
             if (/projeto[\s_\-]?pol[ií]tico[\s_\-]?pedag[óo]gico|\bppp\b/i.test(nome)) return 'Projeto Politico Pedagogico';
+            if (/relat[oó]rio[\s_\-]?de[\s_\-]?gest[aã]o[\s_\-]?fiscal|\brgf\b/i.test(nome) || /relatorio\s*de\s*gestao\s*fiscal|relatoriodegestaofiscal|\brgf\b/.test(nomeNormalizado)) return 'Relatório de Gestão Fiscal - RGF';
+            if (/lei[\s_\-]?de[\s_\-]?diretrizes[\s_\-]?or[cç]ament[aá]rias|\bldo\b/i.test(nome) || /lei\s*de\s*diretrizes\s*orcamentarias|leidediretrizesorcamentarias|\bldo\b/.test(nomeNormalizado)) return 'Lei de Diretrizes Orçamentárias (LDO)';
+            if (/plano[\s_\-]?plurianual|\bppa\b/i.test(nome) || /plano\s*plurianual|planoplurianual|\bppa\b/.test(nomeNormalizado)) return 'Plano Plurianual (PPA)';
             if (/emenda/i.test(nome)) return 'Emenda Parlamentar';
             if (/regimento/i.test(nome)) return 'Regimentos';
             if (/(^|[_\-\s])leis?(?:\d{2,4})?(?=$|[_\-\s])/i.test(nome) || /^lei[\s_\-]/i.test(nome) || /[\s_\-]lei[\s_\-]/i.test(nome) || /(^|[_\-\s])leis?\d{4}[_\-\s]\d+/i.test(nome) || /(^|[_\-\s])leis?[_\-\s]*\d{1,4}/i.test(nome) || /\blei\b|\bleis\b/.test(nomeNormalizado)) return 'Lei';
@@ -1205,7 +1307,10 @@
         }
 
         function extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento) {
-            const tipoDetectado = tipoDocumento || detectarTipoDespesaPeloNome(nomeArquivo) || 'Despesas';
+            const contextoFinanceiro = normalizarBusca(`${nomeArquivo || ''} ${urlDocumentos || ''}`);
+            const tipoDetectado = /informacao\s*financeiras?|balanco\s*anual|balancoanual|balancetes?\s*mensais|balancetesmensais/.test(contextoFinanceiro)
+                ? 'Balancetes'
+                : (tipoDocumento || detectarTipoDespesaPeloNome(nomeArquivo) || 'Despesas');
             const nomeLimpo = limparDescricaoArquivo(nomeArquivo)
                 .replace(/^\d{4}\s+\d{1,2}\s*[A-Za-z\u00C0-\u00FF]+\s*/i, '')
                 .replace(/\b(LSTORD|LSTEMP|RAZLIQ)\b/ig, (match) => {
@@ -1219,7 +1324,9 @@
                 .replace(/\s+/g, ' ')
                 .trim();
 
-            const numeroMatch = String(nomeArquivo || '').match(/(?:^|[_\-\s])(\d{1,3})(?:[\.\s_\-]|$)/);
+            const fonteNumero = `${nomeArquivo || ''} ${texto || ''}`;
+            const numeroMatch = fonteNumero.match(/(?:n[º°o]?\s*|numero\s+de\s+contrato\s*:?\s*|contrato\s+|ct\s*)(\d{1,4})(?:\s*[-\/]\s*((?:19|20)\d{2}))?/i)
+                || String(nomeArquivo || '').match(/(?:^|[_\-\s])(\d{1,4})(?:[\.\s_\-]|$)/);
             const competencia = obterDataCompetenciaArquivo(nomeArquivo);
             const anoArquivo = extrairAnoDoNomeArquivo(nomeArquivo);
             const data = extrairDataPadrao(texto, nomeArquivo) || competencia || (anoArquivo ? `01/01/${anoArquivo}` : null);
@@ -2171,12 +2278,18 @@
             const tipo = (nomeDetectado) => tipoDocumento || resolverTipoNome(nomeDetectado);
             const nomeArquivoNormalizado = normalizarBusca(nomeArquivo);
             const tipoDetectadoPeloNome = detectarTipoPeloNome(nomeArquivo);
+            const tipoDetectadoPelaUrl = detectarTipoDespesaPeloNome(urlDocumentos);
             const tipoSelecionadoNormalizado = normalizarBusca(tipoDocumento);
 
             // Quando o tipo foi selecionado manualmente, prioriza esse roteamento.
             if (tipoSelecionadoNormalizado) {
                 if (tipoDocumentoSemNumero(tipoDocumento)) {
                     console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DESPESA/CONTABIL pelo tipo selecionado`);
+                    return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
+                }
+
+                if (/\bcontrato\b|aditivo\s+de\s+contrato|extrato\s+de\s+contrato/.test(tipoSelecionadoNormalizado)) {
+                    console.log(`[DEBUG] ${nomeArquivo} -> Detectado como CONTRATO pelo tipo selecionado`);
                     return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipoDocumento);
                 }
 
@@ -2237,9 +2350,31 @@
                 return extrairInformacoesPPP(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo('Projeto Político Pedagógico'));
             }
 
+            if (tipoDetectadoPeloNome && /contrato|procedimentos?\s+licitatorios?|homologacao|ata\s+de\s+registro\s+de\s+precos/.test(normalizarBusca(tipoDetectadoPeloNome))) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROCEDIMENTO/CONTRATO pelo detector de nome`);
+                return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoDetectadoPeloNome));
+            }
+
             if (tipoDetectadoPeloNome && tipoDocumentoSemNumero(tipoDetectadoPeloNome)) {
                 console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DESPESA/CONTABIL pelo detector de nome`);
                 return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoDetectadoPeloNome));
+            }
+
+            const tipoProcedimentoDetectadoPeloConteudo = detectarTipoProcedimentoPeloConteudo(texto);
+            if (tipoProcedimentoDetectadoPeloConteudo) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como PROCEDIMENTO/CONTRATO pelo conteúdo`);
+                return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoProcedimentoDetectadoPeloConteudo));
+            }
+
+            const tipoDespesaDetectadoPeloConteudo = detectarTipoDespesaPeloConteudo(texto);
+            if (tipoDespesaDetectadoPeloConteudo) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DESPESA/CONTABIL pelo conteúdo`);
+                return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoDespesaDetectadoPeloConteudo));
+            }
+
+            if (tipoDetectadoPelaUrl && tipoDocumentoSemNumero(tipoDetectadoPelaUrl)) {
+                console.log(`[DEBUG] ${nomeArquivo} -> Detectado como DESPESA/CONTABIL pela URL`);
+                return extrairInformacoesDespesaGenerica(texto, nomeArquivo, numeroDocumento, urlDocumentos, tipo(tipoDetectadoPelaUrl));
             }
 
             if (tipoDetectadoPeloNome === 'Ata') {
